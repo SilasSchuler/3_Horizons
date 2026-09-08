@@ -1,0 +1,10 @@
+{
+  "name": "hackathon",
+  "version": "1.0.0",
+  "type": "module",
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "hardhat": "^3.16.0",
+    "typescript": "~6.0.3"
+  }
+}
