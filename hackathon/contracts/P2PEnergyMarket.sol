@@ -132,41 +132,77 @@ contract P2PEnergyMarket {
     }
 
     // ─────────────────────────────────────────────────────────────
-    //  Settlement-Logik  (HIER IMPLEMENTIEREN TEAMS)
+    //  Settlement-Logik
     // ─────────────────────────────────────────────────────────────
 
     /**
      * @notice Rechnet einen Slot ab: matched Produzenten mit Konsumenten,
      *         transferiert Stablecoin entsprechend.
-     *
-     * @dev Matching-Strategie: sequenzielles Draining statt proportionaler
-     *      Verteilung. Produzenten und Konsumenten werden je nach Netto
-     *      (production - consumption, ggf. durch BatteryManager angepasst)
-     *      in zwei Listen sortiert und mit zwei Zeigern gegeneinander
-     *      abgearbeitet - der jeweils kleinere Rest (Überschuss/Defizit)
-     *      wird komplett gehandelt, bevor zum nächsten Produzenten/Konsumenten
-     *      weitergegangen wird. Das erzeugt maximal (producerCount + consumerCount)
-     *      Matches/Events statt O(n²) bei voller proportionaler Aufteilung,
-     *      bleibt aber vollständig (alle Überschüsse/Defizite werden geräumt,
-     *      solange Gesamtangebot und -nachfrage übereinstimmen).
+     * @dev Orchestriert die vier Schritte aus der Logik-Beschreibung am
+     *      Contract-Kopf oben - je ein interner Helper pro Schritt.
      */
     function settleSlot() external {
         uint256 slot = oracle.getCurrentSlot();
         require(slot > lastSettledSlot, "Slot already settled");
 
-        uint256 n = households.length;
-        address[] memory producers = new address[](n);
-        uint256[] memory surplus = new uint256[](n);
-        uint256 producerCount;
+        // 1. Pro Slot: Lese alle Meter-Daten aus dem Oracle
+        IOracleStorage.MeterReading[] memory readings = _readMeterData();
 
-        address[] memory consumers = new address[](n);
-        uint256[] memory deficit = new uint256[](n);
-        uint256 consumerCount;
+        // 2. Berechne pro Haushalt: Überschuss = produktion - verbrauch
+        int256[] memory netPositions = _calculateNetPositions(readings);
+
+        // 3. Matche Produzenten (Überschuss > 0) mit Konsumenten (Defizit)
+        (
+            address[] memory matchProducer,
+            address[] memory matchConsumer,
+            uint256[] memory matchEnergyWh,
+            uint256 matchCount
+        ) = _matchProducersConsumers(netPositions);
+
+        // 4. Transferiere Stablecoin von Konsument an Produzent
+        (uint256 totalEnergyTraded, uint256 totalPaid) = _settleTrades(
+            matchProducer,
+            matchConsumer,
+            matchEnergyWh,
+            matchCount,
+            slot
+        );
+
+        lastSettledSlot = slot;
+        emit SlotSettled(slot, totalEnergyTraded, totalPaid);
+    }
+
+    /// @dev Schritt 1: Liest die aktuellsten Meter-Daten aller registrierten
+    ///      Haushalte aus dem Oracle (gleiche Reihenfolge wie `households`).
+    function _readMeterData() internal view returns (IOracleStorage.MeterReading[] memory readings) {
+        uint256 n = households.length;
+        readings = new IOracleStorage.MeterReading[](n);
+        for (uint256 i = 0; i < n; i++) {
+            readings[i] = oracle.getLatestMeterReading(households[i]);
+        }
+    }
+
+    /// @dev Schritt 2: Berechnet pro Haushalt netto = produktion - verbrauch.
+    ///      Falls ein BatteryManager verknüpft ist (Phase 2, siehe Feld
+    ///      `batteryManager` + `setBatteryManager()`), wird dessen Lade-/
+    ///      Entladeentscheidung hier VOR der Produzent/Konsument-Klassifizierung
+    ///      (Schritt 3) eingerechnet, damit Handel und Batterie-Strategie
+    ///      konsistent bleiben. decideAction() wird live in dieser Transaktion
+    ///      aufgerufen, damit die Entscheidung garantiert zu denselben
+    ///      Meter-Daten gehört, die hier gehandelt werden. Nicht jeder
+    ///      Haushalt hat zwingend eine verwaltete Batterie - deshalb zuerst
+    ///      isManaged() prüfen; ein fehlschlagender Call wird per try/catch
+    ///      ignoriert, statt den ganzen Slot zu blockieren.
+    function _calculateNetPositions(IOracleStorage.MeterReading[] memory readings)
+        internal
+        returns (int256[] memory netPositions)
+    {
+        uint256 n = households.length;
+        netPositions = new int256[](n);
 
         for (uint256 i = 0; i < n; i++) {
             address household = households[i];
-            IOracleStorage.MeterReading memory reading = oracle.getLatestMeterReading(household);
-            int256 net = int256(reading.productionWh) - int256(reading.consumptionWh);
+            int256 net = int256(readings[i].productionWh) - int256(readings[i].consumptionWh);
 
             if (address(batteryManager) != address(0) && batteryManager.isManaged(household)) {
                 try batteryManager.decideAction(household)
@@ -182,43 +218,66 @@ contract P2PEnergyMarket {
                 }
             }
 
+            netPositions[i] = net;
+        }
+    }
+
+    /// @dev Schritt 3: Klassifiziert Haushalte anhand ihres Nettos in
+    ///      Produzenten (Überschuss > 0) und Konsumenten (Defizit) und
+    ///      matched sie per sequenziellem Draining: der jeweils kleinere
+    ///      Rest (Überschuss/Defizit) wird komplett verplant, bevor zum
+    ///      nächsten Produzenten/Konsumenten weitergegangen wird. Das
+    ///      erzeugt maximal (Produzenten + Konsumenten) Matches statt O(n²)
+    ///      bei voller proportionaler Aufteilung, bleibt aber vollständig,
+    ///      solange Gesamtangebot und -nachfrage übereinstimmen.
+    function _matchProducersConsumers(int256[] memory netPositions)
+        internal
+        view
+        returns (
+            address[] memory matchProducer,
+            address[] memory matchConsumer,
+            uint256[] memory matchEnergyWh,
+            uint256 matchCount
+        )
+    {
+        uint256 n = households.length;
+
+        address[] memory producers = new address[](n);
+        uint256[] memory surplus = new uint256[](n);
+        uint256 producerCount;
+
+        address[] memory consumers = new address[](n);
+        uint256[] memory deficit = new uint256[](n);
+        uint256 consumerCount;
+
+        for (uint256 i = 0; i < n; i++) {
+            int256 net = netPositions[i];
             if (net > 0) {
-                producers[producerCount] = household;
+                producers[producerCount] = households[i];
                 surplus[producerCount] = uint256(net);
                 producerCount++;
             } else if (net < 0) {
-                consumers[consumerCount] = household;
+                consumers[consumerCount] = households[i];
                 deficit[consumerCount] = uint256(-net);
                 consumerCount++;
             }
         }
 
-        uint256 totalEnergyTraded;
-        uint256 totalPaid;
+        matchProducer = new address[](producerCount + consumerCount);
+        matchConsumer = new address[](producerCount + consumerCount);
+        matchEnergyWh = new uint256[](producerCount + consumerCount);
+
         uint256 p;
         uint256 c;
 
         while (p < producerCount && c < consumerCount) {
-            address producer = producers[p];
-            address consumer = consumers[c];
             uint256 tradeWh = surplus[p] < deficit[c] ? surplus[p] : deficit[c];
 
             if (tradeWh > 0) {
-                uint256 pricePerKwh = energyPricePerKwh;
-                if (address(incentiveController) != address(0)) {
-                    uint256 multiplier = incentiveController.getPriceMultiplier(consumer);
-                    pricePerKwh = (energyPricePerKwh * multiplier) / 1000;
-                }
-
-                uint256 amount = (tradeWh * pricePerKwh) / 1000;
-
-                bool success = stablecoin.transferFrom(consumer, producer, amount);
-                require(success, "Token transfer failed");
-
-                emit EnergyTraded(producer, consumer, tradeWh, amount, slot);
-
-                totalEnergyTraded += tradeWh;
-                totalPaid += amount;
+                matchProducer[matchCount] = producers[p];
+                matchConsumer[matchCount] = consumers[c];
+                matchEnergyWh[matchCount] = tradeWh;
+                matchCount++;
 
                 surplus[p] -= tradeWh;
                 deficit[c] -= tradeWh;
@@ -227,9 +286,45 @@ contract P2PEnergyMarket {
             if (surplus[p] == 0) p++;
             if (deficit[c] == 0) c++;
         }
+    }
 
-        lastSettledSlot = slot;
-        emit SlotSettled(slot, totalEnergyTraded, totalPaid);
+    /// @dev Schritt 4: Transferiert für jeden Match den fälligen Stablecoin-
+    ///      Betrag vom Konsumenten an den Produzenten via
+    ///      stablecoin.transferFrom(consumer, producer, amount) - setzt
+    ///      voraus, dass der Konsument vorab approve() aufgerufen hat - und
+    ///      emittiert je Match ein EnergyTraded-Event. Falls ein
+    ///      IncentiveController verknüpft ist (Phase 3, siehe Feld
+    ///      `incentiveController` + `setIncentiveController()`), wird der
+    ///      Preis pro Match mit dem Reputations-Multiplikator des Konsumenten
+    ///      (Käufers) skaliert (1000 = neutral, <1000 = Rabatt, >1000 = Aufschlag).
+    function _settleTrades(
+        address[] memory matchProducer,
+        address[] memory matchConsumer,
+        uint256[] memory matchEnergyWh,
+        uint256 matchCount,
+        uint256 slot
+    ) internal returns (uint256 totalEnergyTraded, uint256 totalPaid) {
+        for (uint256 i = 0; i < matchCount; i++) {
+            address producer = matchProducer[i];
+            address consumer = matchConsumer[i];
+            uint256 tradeWh = matchEnergyWh[i];
+
+            uint256 pricePerKwh = energyPricePerKwh;
+            if (address(incentiveController) != address(0)) {
+                uint256 multiplier = incentiveController.getPriceMultiplier(consumer);
+                pricePerKwh = (energyPricePerKwh * multiplier) / 1000;
+            }
+
+            uint256 amount = (tradeWh * pricePerKwh) / 1000;
+
+            bool success = stablecoin.transferFrom(consumer, producer, amount);
+            require(success, "Token transfer failed");
+
+            emit EnergyTraded(producer, consumer, tradeWh, amount, slot);
+
+            totalEnergyTraded += tradeWh;
+            totalPaid += amount;
+        }
     }
 
     // ─────────────────────────────────────────────────────────────
