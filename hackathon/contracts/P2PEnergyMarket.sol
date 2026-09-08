@@ -140,10 +140,16 @@ contract P2PEnergyMarket {
      * @dev surplus = überschüssige Energie, deficit = fehlende Energie
      */
     struct Position {
-            address household;
-            uint256 surplus;
-            uint256 deficit;
-        }
+        address household;
+        uint256 surplus;
+        uint256 deficit;
+    }
+
+    struct Trade{
+        address producer;
+        address consumer;
+        uint256 energyWh;
+    }
 
     /**
      * @notice Rechnet einen Slot ab: matched Produzenten mit Konsumenten,
@@ -273,19 +279,67 @@ function settleSlot() external {
     // 4. Pro Match: berechne Betrag = energieWh * effektiverPreisProKwh / 1000
     //  *       (Wattstunden -> Kilowattstunden)
 
+    
+    //Assumption. With each trade either a producer or consumer is used up. So there never should be more than double the total number of them.
+    uint256 producerIndex = 0;
+    uint256 tradeCount = 0;
+    Trade[] memory trades = new Trade[](households.length); // see sizing note below
 
+    for (uint256 i = 0; i < positions.length; i++) {
+        uint256 remainingDeficit = positions[i].deficit;
 
+        while (remainingDeficit > 0) {
+            // If there are comma errors the last consumer might end up with a slightly higher deficit.
+            while (producerIndex < positions.length && positions[producerIndex].surplus == 0) {
+                producerIndex++;
+            }
+            if (producerIndex >= positions.length) {
+                break; // no producers left; any leftover remainingDeficit goes unfilled
+            }
+            uint256 matched = min(remainingDeficit, positions[producerIndex].surplus);
 
+            trades[tradeCount] = Trade({
+                producer: positions[producerIndex].household,
+                consumer: positions[i].household,
+                energyWh: matched
+            });
+            tradeCount++;
+
+            remainingDeficit -= matched;
+            positions[producerIndex].surplus -= matched;
+        }
+    }
 
     //  *    5. Transferiere via stablecoin.transferFrom(consumer, producer, amount)
     //  *       (Konsumenten müssen vorher approve() aufgerufen haben!)
-    //  *    6. Emit EnergyTraded für jeden Match
-    //  *    7. Setze lastSettledSlot auf currentSlot
-    //  *    8. Emit SlotSettled
+    uint256 totalEnergyTraded = 0;
+    uint256 totalPaid = 0;
 
+    for (uint256 i = 0; i < tradeCount; i++) {
+        uint256 calculatedCost = calculateCost(trades[i].energyWh);
+        stablecoin.transferFrom(trades[i].consumer, trades[i].producer, calculatedCost);
 
-    revert("Not implemented yet - this is your job!");
-    }   
+        emit EnergyTraded(trades[i].producer, trades[i].consumer, trades[i].energyWh, calculatedCost, currentSlot);
+
+        totalEnergyTraded += trades[i].energyWh;
+        totalPaid += calculatedCost;
+    }
+
+    // 7. Setze lastSettledSlot auf currentSlot
+    lastSettledSlot = currentSlot;
+
+    // 8. Emit SlotSettled
+    emit SlotSettled(currentSlot, totalEnergyTraded, totalPaid);
+
+    //ToDo: If there is a surplus that should be payed to producers. Scaled the same way with constant rate for Network.
+
+}
+
+ 
+
+    function min(uint256 a, uint256 b) internal pure returns (uint256) {
+        return a < b ? a : b;
+    } 
 
 
     // ─────────────────────────────────────────────────────────────
