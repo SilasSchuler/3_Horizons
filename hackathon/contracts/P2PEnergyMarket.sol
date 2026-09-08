@@ -136,6 +136,16 @@ contract P2PEnergyMarket {
     // ─────────────────────────────────────────────────────────────
 
     /**
+     * @notice Repräsentiert die Position eines Haushalts im aktuellen Slot.
+     * @dev surplus = überschüssige Energie, deficit = fehlende Energie
+     */
+    struct Position {
+            address household;
+            uint256 surplus;
+            uint256 deficit;
+        }
+
+    /**
      * @notice Rechnet einen Slot ab: matched Produzenten mit Konsumenten,
      *         transferiert Stablecoin entsprechend.
      *
@@ -199,11 +209,84 @@ contract P2PEnergyMarket {
      *    7. Setze lastSettledSlot auf currentSlot
      *    8. Emit SlotSettled
      */
-    function settleSlot() external {
-        // TODO: Implementierung durch Team
+function settleSlot() external {
 
-        revert("Not implemented yet - this is your job!");
+    // 1. Hole currentSlot vom Oracle und prüfe, dass er > lastSettledSlot ist
+
+    uint256 currentSlot = oracle.getCurrentSlot();
+    require(currentSlot > lastSettledSlot, "Current slot must be greater than last settled slot");
+
+    // 2. Iteriere über alle households:
+    //    - Lese MeterReading via oracle.getLatestMeterReading()
+    //    - Sammle Überschüsse und Defizite
+
+    Position[] memory positions = new Position[](households.length);
+
+    for (uint256 i = 0; i < households.length; i++) {
+        IOracleStorage.MeterReading memory reading = oracle.getLatestMeterReading(households[i]);
+
+        // Needs to be signed to distinguish between surplus and deficit
+        int256 netto = int256(reading.productionWh) - int256(reading.consumptionWh);
+
+        uint256 surplus = 0;
+        uint256 deficit = 0;
+        if (netto > 0) {
+            surplus = uint256(netto);
+        } else {
+            deficit = uint256(-netto);
+        }
+
+        positions[i] = Position({
+            household: households[i],
+            surplus: surplus,
+            deficit: deficit
+        });
     }
+
+    // 3. Matche Produzenten mit Konsumenten
+    // (einfache Strategie: proportional verteilen)
+
+    uint256 totalSurplus = 0;
+    uint256 totalDeficit = 0;
+    for (uint256 i = 0; i < positions.length; i++) {
+        totalSurplus += positions[i].surplus;
+        totalDeficit += positions[i].deficit;
+    }
+
+    // If negative: more deficit than surplus -> scale deficits down.
+    // If positive: more surplus than deficit -> scale surpluses down.
+    int256 totalDistributed = int256(totalSurplus) - int256(totalDeficit);
+
+    if (totalDistributed < 0 && totalDeficit > 0) {
+        // Not enough surplus to cover all deficits -> scale each deficit down proportionally
+        for (uint256 i = 0; i < positions.length; i++) {
+            positions[i].deficit = (positions[i].deficit * totalSurplus) / totalDeficit;
+        }
+    } else if (totalDistributed > 0 && totalSurplus > 0) {
+        // Not enough deficit to absorb all surplus -> scale each surplus down proportionally
+        for (uint256 i = 0; i < positions.length; i++) {
+            positions[i].surplus = (positions[i].surplus * totalDeficit) / totalSurplus;
+        }
+    }
+    // If totalDistributed == 0, surplus and deficit already balance exactly -> no scaling needed.
+
+    // 4. Pro Match: berechne Betrag = energieWh * effektiverPreisProKwh / 1000
+    //  *       (Wattstunden -> Kilowattstunden)
+
+
+
+
+
+    //  *    5. Transferiere via stablecoin.transferFrom(consumer, producer, amount)
+    //  *       (Konsumenten müssen vorher approve() aufgerufen haben!)
+    //  *    6. Emit EnergyTraded für jeden Match
+    //  *    7. Setze lastSettledSlot auf currentSlot
+    //  *    8. Emit SlotSettled
+
+
+    revert("Not implemented yet - this is your job!");
+    }   
+
 
     // ─────────────────────────────────────────────────────────────
     //  View Functions (Hilfsfunktionen)
