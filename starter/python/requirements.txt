@@ -1,0 +1,11 @@
+# >=7.0 zwingend: alle Skripte importieren ExtraDataToPOAMiddleware, das erst
+# ab web3.py 7.0 existiert (vorher hiess es geth_poa_middleware). Mit <7.0
+# schlägt der Import fehl.
+web3>=7.0,<8.0
+python-dotenv>=1.0
+numpy>=1.26
+scikit-learn>=1.4
+# Optional für Phase 3 (Teams können erweitern):
+# xgboost>=2.0
+# prophet>=1.1
+# tensorflow>=2.15

@@ -1,0 +1,55 @@
+{
+  "comment": "Konfiguration für Energy Trading Challenge Simulation",
+
+  "simulation": {
+    "slot_duration_seconds": 60,
+    "comment_slot": "1 Slot = 1 reale Minute = 15 Minuten in der Simulation"
+  },
+
+  "households": [
+    {
+      "id": "house_01",
+      "address": "0xREPLACE_WITH_TEAM_WALLET_1",
+      "type": "producer_consumer",
+      "pv_peak_kwp": 8.0,
+      "battery_capacity_kwh": 10.0,
+      "battery_max_rate_kwh": 3.0,
+      "base_consumption_kwh_per_hour": 0.4
+    },
+    {
+      "id": "house_02",
+      "address": "0xREPLACE_WITH_TEAM_WALLET_2",
+      "type": "producer_consumer",
+      "pv_peak_kwp": 5.0,
+      "battery_capacity_kwh": 7.5,
+      "battery_max_rate_kwh": 2.5,
+      "base_consumption_kwh_per_hour": 0.6
+    },
+    {
+      "id": "house_03",
+      "address": "0xREPLACE_WITH_TEAM_WALLET_3",
+      "type": "consumer_only",
+      "pv_peak_kwp": 0.0,
+      "battery_capacity_kwh": 0.0,
+      "battery_max_rate_kwh": 0.0,
+      "base_consumption_kwh_per_hour": 0.8
+    }
+  ],
+
+  "weather": {
+    "comment": "Tagesgang wird simuliert: Sonnenaufgang bis -untergang",
+    "max_irradiance_wm2": 900,
+    "base_temperature_c": 18.0,
+    "cloud_cover_pattern": "sinusoidal_with_noise"
+  },
+
+  "blockchain": {
+    "rpc_url": "https://rpc.sepolia.org",
+    "chain_id": 11155111,
+    "oracle_storage_address": "0xREPLACE_AFTER_DEPLOY",
+    "p2p_market_address": "0xREPLACE_AFTER_DEPLOY",
+    "battery_manager_address": "0xREPLACE_AFTER_DEPLOY",
+    "incentive_controller_address": "0xREPLACE_AFTER_DEPLOY",
+    "stablecoin_address": "0xREPLACE_WITH_PROVIDED_TOKEN_ADDRESS"
+  }
+}
