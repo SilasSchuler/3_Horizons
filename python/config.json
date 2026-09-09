@@ -9,7 +9,7 @@
   "households": [
     {
       "id": "house_01",
-      "address": "0xREPLACE_WITH_TEAM_WALLET_1",
+      "address": "0xc4294cdd83191cCfeb805Da2f1A6fEd0416E8A64",
       "type": "producer_consumer",
       "pv_peak_kwp": 8.0,
       "battery_capacity_kwh": 10.0,
@@ -18,21 +18,12 @@
     },
     {
       "id": "house_02",
-      "address": "0xREPLACE_WITH_TEAM_WALLET_2",
+      "address": "0xBf38E94822Fe96178dE997700E69a0CA2e3eb3d3",
       "type": "producer_consumer",
       "pv_peak_kwp": 5.0,
       "battery_capacity_kwh": 7.5,
       "battery_max_rate_kwh": 2.5,
       "base_consumption_kwh_per_hour": 0.6
-    },
-    {
-      "id": "house_03",
-      "address": "0xREPLACE_WITH_TEAM_WALLET_3",
-      "type": "consumer_only",
-      "pv_peak_kwp": 0.0,
-      "battery_capacity_kwh": 0.0,
-      "battery_max_rate_kwh": 0.0,
-      "base_consumption_kwh_per_hour": 0.8
     }
   ],
 
@@ -44,12 +35,12 @@
   },
 
   "blockchain": {
-    "rpc_url": "https://rpc.sepolia.org",
+    "rpc_url": "https://ethereum-sepolia-rpc.publicnode.com",
     "chain_id": 11155111,
-    "oracle_storage_address": "0xREPLACE_AFTER_DEPLOY",
-    "p2p_market_address": "0xREPLACE_AFTER_DEPLOY",
-    "battery_manager_address": "0xREPLACE_AFTER_DEPLOY",
+    "oracle_storage_address": "0xC9e5540F25aF5435D5AaCfAd848125b3931b4d45",
+    "p2p_market_address": "0x7F92Ac59007ac159e152FDae4148747A5F106f97",
+    "battery_manager_address": "0x474AB0c40CaE4447504B0C6940E49a4458836ef1",
     "incentive_controller_address": "0xREPLACE_AFTER_DEPLOY",
-    "stablecoin_address": "0xREPLACE_WITH_PROVIDED_TOKEN_ADDRESS"
+    "stablecoin_address": "0x4BaBBaE33998fEd65Ada53bc41CeAa3Cde7F7B46"
   }
 }

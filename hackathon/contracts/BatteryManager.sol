@@ -45,6 +45,20 @@ contract BatteryManager is IBatteryManager {
     mapping(address => bool) public isManaged;
     address[] public managedHouseholds;
 
+    /// @notice Obere SoC-Schwelle: darüber wird nicht mehr geladen.
+    uint256 public constant MAX_CHARGE_SOC = 90;
+
+    /// @notice Untere SoC-Schwelle für Entladung im Normalfall.
+    uint256 public constant MIN_DISCHARGE_SOC = 20;
+
+    /// @notice Strengere untere SoC-Schwelle bei hoher Bewölkung: die Batterie
+    ///         wird stärker geschont, weil kurzfristig mit wenig PV-Nachschub
+    ///         zu rechnen ist.
+    uint256 public constant MIN_DISCHARGE_SOC_CLOUDY = 40;
+
+    /// @notice Bewölkungsgrad (%), ab dem die strengere Reserve-Schwelle gilt.
+    uint256 public constant CLOUD_COVER_THRESHOLD = 80;
+
     // ─────────────────────────────────────────────────────────────
     //  Events
     // ─────────────────────────────────────────────────────────────
@@ -82,36 +96,89 @@ contract BatteryManager is IBatteryManager {
 
     /**
      * @notice Trifft eine Lade-/Entladeentscheidung für einen Haushalt.
-     *
-     *  TODO (Teams):
-     *    1. Lese aktuellen SoC via oracle.getLatestBatteryState(household)
-     *    2. Lese Meter-Daten: production - consumption = surplus/deficit
-     *    3. Lese Wetterdaten: hohe Strahlung = mehr PV erwartet
-     *    4. Entscheidungsbeispiel (einfache Heuristik):
-     *         - Wenn Überschuss > 0 UND SoC < 90%: CHARGE
-     *         - Wenn Defizit > 0 UND SoC > 20%:    DISCHARGE
-     *         - Sonst:                              IDLE
-     *    5. Komplexere Strategie könnte Wetter berücksichtigen:
-     *         - Wenn cloudCover > 80%: Batterie entladen statt einspeisen
-     *           (weil morgen weniger PV erwartet)
-     *    6. Emit DecisionMade mit reason-String für Transparenz
+     * @dev Heuristik:
+     *        - Überschuss (Produktion > Verbrauch) UND SoC < MAX_CHARGE_SOC:
+     *          CHARGE mit min(Überschuss, maxRateWh, freie Kapazität bis zur
+     *          Schwelle).
+     *        - Defizit (Verbrauch > Produktion) UND SoC über der Reserve-
+     *          Schwelle: DISCHARGE mit min(Defizit, maxRateWh, verfügbare
+     *          Kapazität oberhalb der Reserve).
+     *          Die Reserve-Schwelle ist bei hoher Bewölkung (> CLOUD_COVER_THRESHOLD)
+     *          höher (MIN_DISCHARGE_SOC_CLOUDY statt MIN_DISCHARGE_SOC), weil
+     *          dann kurzfristig weniger PV-Nachschub zu erwarten ist und die
+     *          Batterie stärker geschont werden soll.
+     *        - Sonst (kein Netto, kein SoC-Spielraum, keine Batterie
+     *          vorhanden): IDLE.
+     *      `amountWh` ist auf `maxRateWh` (Lade-/Entladerate pro Slot) und die
+     *      tatsächlich verfügbare Kapazität begrenzt, damit die Entscheidung
+     *      physikalisch plausibel bleibt.
      */
     function decideAction(address household) external returns (Action, uint256) {
         require(isManaged[household], "Not managed");
 
-        // TODO: Implementierung durch Team
-        //
-        // IOracleStorage.BatteryState memory bs = oracle.getLatestBatteryState(household);
-        // IOracleStorage.MeterReading memory mr = oracle.getLatestMeterReading(household);
-        // IOracleStorage.WeatherData memory wd = oracle.getLatestWeather();
-        //
-        // ... eure Logik hier ...
-        //
-        // lastDecision[household] = Decision({...});
-        // emit DecisionMade(household, action, amount, slot, "your-reason");
-        // return (action, amount);
+        IOracleStorage.BatteryState memory bs = oracle.getLatestBatteryState(household);
+        IOracleStorage.MeterReading memory mr = oracle.getLatestMeterReading(household);
+        IOracleStorage.WeatherData memory wd = oracle.getLatestWeather();
 
-        revert("Not implemented yet - this is your job!");
+        Action action = Action.IDLE;
+        uint256 amountWh;
+        string memory reason = "no-battery-capacity";
+
+        if (bs.capacityWh > 0) {
+            if (mr.productionWh > mr.consumptionWh) {
+                uint256 surplusWh = mr.productionWh - mr.consumptionWh;
+
+                if (bs.socPercent < MAX_CHARGE_SOC) {
+                    uint256 roomWh = (bs.capacityWh * (MAX_CHARGE_SOC - bs.socPercent)) / 100;
+                    amountWh = _min(surplusWh, _min(bs.maxRateWh, roomWh));
+                    if (amountWh > 0) {
+                        action = Action.CHARGE;
+                        reason = "surplus-charge";
+                    } else {
+                        reason = "surplus-but-no-room";
+                    }
+                } else {
+                    reason = "soc-at-max-charge-threshold";
+                }
+            } else if (mr.consumptionWh > mr.productionWh) {
+                uint256 deficitWh = mr.consumptionWh - mr.productionWh;
+                bool cloudy = wd.cloudCover > CLOUD_COVER_THRESHOLD;
+                uint256 minSoc = cloudy ? MIN_DISCHARGE_SOC_CLOUDY : MIN_DISCHARGE_SOC;
+
+                if (bs.socPercent > minSoc) {
+                    uint256 availableWh = (bs.capacityWh * (bs.socPercent - minSoc)) / 100;
+                    amountWh = _min(deficitWh, _min(bs.maxRateWh, availableWh));
+                    if (amountWh > 0) {
+                        action = Action.DISCHARGE;
+                        reason = cloudy ? "deficit-discharge-cloudy-reserve" : "deficit-discharge";
+                    } else {
+                        reason = "deficit-but-below-reserve";
+                    }
+                } else {
+                    reason = "soc-below-discharge-threshold";
+                }
+            } else {
+                reason = "balanced-no-action";
+            }
+        }
+
+        uint256 slot = oracle.getCurrentSlot();
+
+        lastDecision[household] = Decision({
+            action: action,
+            amountWh: amountWh,
+            slot: slot,
+            timestamp: block.timestamp
+        });
+
+        emit DecisionMade(household, action, amountWh, slot, reason);
+
+        return (action, amountWh);
+    }
+
+    /// @dev Kleinere von zwei uint256-Zahlen.
+    function _min(uint256 a, uint256 b) internal pure returns (uint256) {
+        return a < b ? a : b;
     }
 
     // ─────────────────────────────────────────────────────────────

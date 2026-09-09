@@ -317,6 +317,8 @@ contract P2PEnergyMarket {
 
             uint256 amount = (tradeWh * pricePerKwh) / 1000;
 
+   // @dev Transfer vom Konsumenten an den Produzenten. Konsument muss vorher
+
             bool success = stablecoin.transferFrom(consumer, producer, amount);
             require(success, "Token transfer failed");
 

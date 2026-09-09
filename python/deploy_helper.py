@@ -18,6 +18,7 @@ Voraussetzung:
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -45,6 +46,18 @@ w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
 account = w3.eth.account.from_key(PRIVATE_KEY)
 
 
+def update_config_address(key: str, address: str):
+    """Schreibt eine deployte Contract-Adresse direkt in config.json (blockchain.<key>),
+    ohne die restliche Formatierung/Kommentare der Datei zu verändern."""
+    text = CONFIG_PATH.read_text()
+    pattern = rf'("{key}"\s*:\s*")[^"]*(")'
+    new_text, count = re.subn(pattern, rf'\g<1>{address}\g<2>', text)
+    if count == 0:
+        print(f"  WARNUNG: '{key}' nicht in config.json gefunden - bitte manuell eintragen: {address}")
+        return
+    CONFIG_PATH.write_text(new_text)
+
+
 def deploy(contract_name: str, constructor_args: list):
     """Deployed einen Contract und gibt die Adresse zurück."""
     artifact_path = ABI_DIR / f"{contract_name}.json"
@@ -66,7 +79,7 @@ def deploy(contract_name: str, constructor_args: list):
         "from": account.address,
         "nonce": nonce,
         "chainId": bc["chain_id"],
-        "gas": 4_000_000,
+        "gas": 3_000_000,
         "maxFeePerGas": w3.to_wei("30", "gwei"),
         "maxPriorityFeePerGas": w3.to_wei("2", "gwei"),
     })
@@ -97,7 +110,7 @@ def main():
 
     address = deploy(contract_name, constructor_args)
 
-    # Hinweis zum Eintragen in config.json
+    # Adresse automatisch in config.json eintragen
     key_map = {
         "OracleStorage": "oracle_storage_address",
         "P2PEnergyMarket": "p2p_market_address",
@@ -105,8 +118,10 @@ def main():
         "IncentiveController": "incentive_controller_address",
     }
     if contract_name in key_map:
-        print(f"→ Trage in config.json unter blockchain.{key_map[contract_name]} ein:")
-        print(f"  \"{address}\"")
+        update_config_address(key_map[contract_name], address)
+        print(f"→ config.json aktualisiert: blockchain.{key_map[contract_name]} = \"{address}\"")
+    else:
+        print(f"Hinweis: kein bekannter config.json-Key für '{contract_name}' - Adresse manuell eintragen: {address}")
 
 
 if __name__ == "__main__":
