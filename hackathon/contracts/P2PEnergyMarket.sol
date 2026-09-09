@@ -74,6 +74,10 @@ contract P2PEnergyMarket {
     event IncentiveControllerUpdated(address indexed incentiveController);
     event ConsumerSkipped(address indexed consumer, uint256 slot, uint256 requestedAmount);
 
+    /// @notice Der BatteryManager-Call ist fehlgeschlagen; es wurde mit dem
+    ///         unkorrigierten Meter-Netto weitergerechnet.
+    event BatteryDecisionFailed(address indexed household, uint256 slot);
+
     // ─────────────────────────────────────────────────────────────
     //  Modifiers
     // ─────────────────────────────────────────────────────────────
@@ -244,6 +248,10 @@ function settleSlot() external nonReentrant {
         // Needs to be signed to distinguish between surplus and deficit
         int256 netto = int256(reading.productionWh) - int256(reading.consumptionWh);
 
+        // Phase 2 (optional): Batterie-Entscheidung VOR der Klassifizierung
+        // einrechnen, damit Handel und Speicherstrategie konsistent sind.
+        netto = _applyBatteryDecision(households[i], netto, currentSlot);
+
         uint256 surplus = 0;
         uint256 deficit = 0;
         if (netto > 0) {
@@ -362,6 +370,48 @@ function settleSlot() external nonReentrant {
 }
 
  
+
+    /**
+     * @dev Phase 2 (optional): korrigiert das Meter-Netto um die Entscheidung
+     *      des BatteryManagers.
+     *
+     *        CHARGE    -> Haushalt behaelt Energie fuer die Batterie  -> netto sinkt
+     *        DISCHARGE -> Batterie liefert zusaetzliche Energie       -> netto steigt
+     *
+     *      Zwei Absicherungen:
+     *        - isManaged() zuerst pruefen: nicht jeder Haushalt hat eine
+     *          verwaltete Batterie. Ohne die Pruefung wuerde decideAction()
+     *          reverten und den ganzen Slot fuer alle blockieren.
+     *        - try/catch: schlaegt der Call trotzdem fehl, wird mit dem
+     *          unkorrigierten Netto weitergerechnet statt abzubrechen.
+     */
+    function _applyBatteryDecision(address household, int256 netto, uint256 currentSlot)
+        internal
+        returns (int256)
+    {
+        // Nicht verknuepft (Phase 1) -> kein externer Call.
+        if (address(batteryManager) == address(0)) {
+            return netto;
+        }
+        if (!batteryManager.isManaged(household)) {
+            return netto;
+        }
+
+        try batteryManager.decideAction(household)
+            returns (IBatteryManager.Action action, uint256 amountWh)
+        {
+            if (action == IBatteryManager.Action.CHARGE) {
+                netto -= int256(amountWh);
+            } else if (action == IBatteryManager.Action.DISCHARGE) {
+                netto += int256(amountWh);
+            }
+            // IDLE: keine Korrektur.
+        } catch {
+            emit BatteryDecisionFailed(household, currentSlot);
+        }
+
+        return netto;
+    }
 
     function min(uint256 a, uint256 b) internal pure returns (uint256) {
         return a < b ? a : b;
