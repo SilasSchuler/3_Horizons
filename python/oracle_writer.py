@@ -84,6 +84,12 @@ class OracleWriter:
             address=Web3.to_checksum_address(bc["oracle_storage_address"]),
             abi=oracle_abi
         )
+        with open(ABI_DIR / "P2PEnergyMarket.json") as f:
+            p2p_market_abi = json.load(f)["abi"]
+        self.p2p_market = self.w3.eth.contract(
+                address=Web3.to_checksum_address(bc["p2p_market_address"]),
+                abi=p2p_market_abi
+            )
 
         self.simulator = EnergySimulator(CONFIG_PATH)
         self.chain_id = bc["chain_id"]
@@ -122,6 +128,19 @@ class OracleWriter:
             if not registered:
                 print(f"Registriere Haushalt {h['id']} ({addr}) ...")
                 self._send_tx(self.oracle.functions.registerHousehold(addr))
+
+    # ─────────────────────────────────────────────────────────────
+
+    def register_p2p_if_needed(self):
+        """Stellt sicher, dass alle konfigurierten Haushalte im P2P Market registriert sind."""
+        for h in self.config["households"]:
+            addr = Web3.to_checksum_address(h["address"])
+            # registered = self.p2p_market.functions.isHouseholdRegistered(addr).call()
+            registered = False
+            if not registered:
+                print(f"Registriere Haushalt {h['id']} ({addr}) ...")
+                self._send_tx(self.p2p_market.functions.registerHousehold(addr))
+
 
     # ─────────────────────────────────────────────────────────────
 
@@ -167,6 +186,7 @@ class OracleWriter:
         """Hauptschleife: pushe einen Slot pro Minute."""
         print("\n=== Oracle Writer gestartet ===\n")
         self.register_households_if_needed()
+        self.register_p2p_if_needed()
         try:
             while True:
                 start = time.time()
