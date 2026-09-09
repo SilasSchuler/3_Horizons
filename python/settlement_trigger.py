@@ -12,9 +12,17 @@ Voraussetzung:
   - .env mit TRIGGER_PRIVATE_KEY (kann derselbe Key wie DEPLOYER sein)
   - config.json mit p2p_market_address gesetzt
   - Konsumenten müssen vorher approve() auf den Stablecoin aufgerufen haben
+
+Logging:
+  - Schreibt sowohl auf die Konsole als auch nach logs/settlement_trigger.log
+  - Pro settleSlot()-Aufruf werden die einzelnen EnergyTraded-Events aus der
+    Transaction-Receipt decodiert und geloggt (das sind die "individuellen
+    Transaktionen" - technisch ein einziger settleSlot()-Call, der intern
+    mehrere Trades matched und pro Trade ein Event emittiert)
 """
 
 import json
+import logging
 import os
 import sys
 import time
@@ -22,17 +30,59 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from web3 import Web3
+from web3.logs import DISCARD
 from web3.middleware import ExtraDataToPOAMiddleware
 
 load_dotenv()
 
 CONFIG_PATH = Path(__file__).parent / "config.json"
 ABI_DIR = Path(__file__).parent / "abi"
+LOG_DIR = Path(__file__).parent / "logs"
+LOG_DIR.mkdir(exist_ok=True)
 
 PRIVATE_KEY = os.getenv("TRIGGER_PRIVATE_KEY") or os.getenv("DEPLOYER_PRIVATE_KEY")
 if not PRIVATE_KEY:
     print("ERROR: TRIGGER_PRIVATE_KEY in .env nicht gesetzt")
     sys.exit(1)
+
+# ─────────────────────────────────────────────────────────────
+#  Logging setup: console + file, same format on both
+# ─────────────────────────────────────────────────────────────
+logger = logging.getLogger("settlement_trigger")
+logger.setLevel(logging.INFO)
+
+formatter = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s", datefmt="%H:%M:%S")
+
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(formatter)
+logger.addHandler(console_handler)
+
+file_handler = logging.FileHandler(LOG_DIR / "settlement_trigger.log", encoding="utf-8")
+file_handler.setFormatter(formatter)
+logger.addHandler(file_handler)
+
+
+def log_settlement_events(market, receipt, slot_hint: str):
+    """Decode and log EnergyTraded + SlotSettled events from a settleSlot() receipt."""
+    trades = market.events.EnergyTraded().process_receipt(receipt, errors=DISCARD)
+    for trade in trades:
+        args = trade["args"]
+        logger.info(
+            "  TRADE slot=%s producer=%s consumer=%s energyWh=%s amountPaid=%s",
+            args["slot"], args["producer"], args["consumer"],
+            args["energyWh"], args["amountPaid"],
+        )
+
+    settled = market.events.SlotSettled().process_receipt(receipt, errors=DISCARD)
+    for s in settled:
+        args = s["args"]
+        logger.info(
+            "  SLOT_SETTLED slot=%s totalEnergyTraded=%s totalPaid=%s tradeCount=%d",
+            args["slot"], args["totalEnergyTraded"], args["totalPaid"], len(trades),
+        )
+
+    if not trades and not settled:
+        logger.warning("  No EnergyTraded/SlotSettled events found in receipt (slot=%s)", slot_hint)
 
 
 def main():
@@ -53,24 +103,13 @@ def main():
         abi=market_abi
     )
 
-    print(f"Settlement-Trigger gestartet, Account: {account.address}")
-    print(f"Market-Contract: {bc['p2p_market_address']}\n")
+    logger.info("Settlement-Trigger gestartet, Account: %s", account.address)
+    logger.info("Market-Contract: %s", bc["p2p_market_address"])
+    logger.info("Log-Datei: %s", LOG_DIR / "settlement_trigger.log")
 
     while True:
         try:
-            print(f"\n→ Trigger settleSlot() um {time.strftime('%H:%M:%S')}")
-
-            # ─────────────────────────────────────────────────────
-            # TODO (Teams): Anpassen falls eure settleSlot() Parameter braucht
-            #
-            # Beispiele für Erweiterungen:
-            #   - settleSlot(uint256 slot)              -> Slot-Argument übergeben
-            #   - settleHousehold(address household)    -> einzeln pro Haushalt
-            #   - settleSlotWithLimit(uint256 maxGas)   -> mit Gas-Limit
-            #
-            # Aktuell: nimmt an, dass settleSlot() ohne Argumente aufrufbar ist.
-            # ─────────────────────────────────────────────────────
-
+            logger.info("Trigger settleSlot()")
             nonce = w3.eth.get_transaction_count(account.address, "pending")
             tx = market.functions.settleSlot().build_transaction({
                 "from": account.address,
@@ -82,15 +121,17 @@ def main():
             })
             signed = w3.eth.account.sign_transaction(tx, PRIVATE_KEY)
             tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
-            print(f"  TX: {tx_hash.hex()}")
+            logger.info("  TX: %s", tx_hash.hex())
             receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+
             if receipt.status == 1:
-                print(f"  ✓ Settlement erfolgreich (Block {receipt.blockNumber})")
+                logger.info("  Settlement erfolgreich (Block %d)", receipt.blockNumber)
+                log_settlement_events(market, receipt, slot_hint=tx_hash.hex())
             else:
-                print(f"  ✗ Settlement fehlgeschlagen!")
+                logger.error("  Settlement fehlgeschlagen! tx=%s", tx_hash.hex())
 
         except Exception as e:
-            print(f"  Fehler: {e}")
+            logger.exception("  Fehler: %s", e)
 
         time.sleep(60)  # 1 Slot warten
 
