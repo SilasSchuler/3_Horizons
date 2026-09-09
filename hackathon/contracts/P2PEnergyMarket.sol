@@ -72,7 +72,9 @@ contract P2PEnergyMarket {
     event PriceUpdated(uint256 newPricePerKwh);
     event BatteryManagerUpdated(address indexed batteryManager);
     event IncentiveControllerUpdated(address indexed incentiveController);
-
+    /// @notice Konsument konnte nicht zahlen (kein approve() oder zu wenig Guthaben).
+    /// @dev Bewusst Event statt revert: sonst blockiert ein Haushalt den ganzen Slot.
+    event ConsumerSkipped(address indexed consumer, uint256 slot, uint256 requestedAmount);
     // ─────────────────────────────────────────────────────────────
     //  Modifiers
     // ─────────────────────────────────────────────────────────────
@@ -81,7 +83,18 @@ contract P2PEnergyMarket {
         require(msg.sender == owner, "Only owner");
         _;
     }
+    
+    /// @dev Reentrancy-Sperre. settleSlot() ruft mit transferFrom() einen externen
+    ///      Token-Contract auf. Ohne Sperre koennte ein boesartiger Token von dort
+    ///      aus erneut settleSlot() aufrufen und denselben Slot doppelt abrechnen.
+    bool private _locked;
 
+    modifier nonReentrant() {
+        require(!_locked, "Reentrant call");
+        _locked = true;
+        _;
+        _locked = false;
+    }
     // ─────────────────────────────────────────────────────────────
     //  Constructor
     // ─────────────────────────────────────────────────────────────
@@ -215,7 +228,7 @@ contract P2PEnergyMarket {
      *    7. Setze lastSettledSlot auf currentSlot
      *    8. Emit SlotSettled
      */
-function settleSlot() external {
+function settleSlot() external nonReentrant {
 
     // 1. Hole currentSlot vom Oracle und prüfe, dass er > lastSettledSlot ist
 
@@ -315,9 +328,31 @@ function settleSlot() external {
     uint256 totalEnergyTraded = 0;
     uint256 totalPaid = 0;
 
+    // 7. Setze lastSettledSlot auf currentSlot
+    // Checks-Effects-Interactions: Status VOR den externen Token-Calls setzen.
+    // Zusammen mit nonReentrant ausgeschlossen, dass ein reentranter Aufruf
+    // denselben Slot doppelt abrechnet.
+    lastSettledSlot = currentSlot;
+    lastSettledSlot = currentSlot;
+
     for (uint256 i = 0; i < tradeCount; i++) {
         uint256 calculatedCost = calculateCost(trades[i].energyWh);
-        stablecoin.transferFrom(trades[i].consumer, trades[i].producer, calculatedCost);
+
+        // try/catch faengt den Revert ab, die bool-Pruefung faengt Token,
+        // die bei fehlender Allowance false zurueckgeben statt zu reverten.
+        bool paid;
+        try stablecoin.transferFrom(trades[i].consumer, trades[i].producer, calculatedCost)
+            returns (bool ok)
+        {
+            paid = ok;
+        } catch {
+            paid = false;
+        }
+
+        if (!paid) {
+            emit ConsumerSkipped(trades[i].consumer, currentSlot, calculatedCost);
+            continue;
+        }
 
         emit EnergyTraded(trades[i].producer, trades[i].consumer, trades[i].energyWh, calculatedCost, currentSlot);
 
@@ -325,8 +360,7 @@ function settleSlot() external {
         totalPaid += calculatedCost;
     }
 
-    // 7. Setze lastSettledSlot auf currentSlot
-    lastSettledSlot = currentSlot;
+
 
     // 8. Emit SlotSettled
     emit SlotSettled(currentSlot, totalEnergyTraded, totalPaid);
