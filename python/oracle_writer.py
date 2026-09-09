@@ -183,4 +183,5 @@ class OracleWriter:
 
 if __name__ == "__main__":
     writer = OracleWriter()
+    writer.simulator.start_real_time -= 6 * 60 * 60   # 21600s = 6 hours
     writer.run()

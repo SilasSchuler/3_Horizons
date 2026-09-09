@@ -24,15 +24,6 @@
       "battery_capacity_kwh": 7.5,
       "battery_max_rate_kwh": 2.5,
       "base_consumption_kwh_per_hour": 0.6
-    },
-    {
-      "id": "house_03",
-      "address": "0xC416DDdD40c28eAfE48275f74B4E4Bdee4E3e75b",
-      "type": "consumer_only",
-      "pv_peak_kwp": 0.0,
-      "battery_capacity_kwh": 0.0,
-      "battery_max_rate_kwh": 0.0,
-      "base_consumption_kwh_per_hour": 0.8
     }
   ],
 
