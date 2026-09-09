@@ -98,7 +98,7 @@ contract BatteryManager is IBatteryManager {
      */
     /// @notice Ziel-Ladegrenze in Prozent. Darueber wird nicht mehr geladen,
     ///         um Reserve fuer die Einspeisung zu lassen.
-    uint256 public constant MAX_SOC = 90;
+    uint256 public constant MAX_SOC = 50;
 
     /// @notice Untere Entladegrenze in Prozent (Tiefentladeschutz).
     uint256 public constant MIN_SOC = 20;
