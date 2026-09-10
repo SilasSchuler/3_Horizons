@@ -130,7 +130,7 @@ class Zusage:
     """
     kaeufer: str
     last_name: Optional[str]
-    menge_wh: int
+    menge_wh: int          # aus dem Angebot bezogene Menge
     begruendung: str = ""
 
 
@@ -157,17 +157,42 @@ class HouseholdAgent:
 
     # ── Kalender ──────────────────────────────────────────────────
 
+    # Ein Angebot muss nicht den ganzen Bedarf decken. Strom kommt nicht
+    # in Portionen aus bestimmten Leitungen - die Abrechnung teilt nur zu,
+    # was gleichzeitig eingespeist und verbraucht wurde. Deckt der Nachbar
+    # 800 von 1200 Wh, kommen die restlichen 400 aus dem Netz, und der
+    # Mischpreis liegt trotzdem unter dem Marktpreis.
+    #
+    # Eine Untergrenze braucht es trotzdem: Fuer 30 Wh einer
+    # Waschmaschinenladung lohnt der Aufwand nicht, und der Markt wuerde
+    # sich mit Kleinstzuteilungen zusetzen.
+    MIN_ANTEIL = 0.25
+
     def passende_lasten(self, stunde: float, max_wh: int) -> list:
         """
         Welche Lasten koennten in dieses Fenster verschoben werden?
 
-        Drei Bedingungen: noch nicht eingeplant, Stunde liegt im Fenster,
-        und die Last passt in die angebotene Menge.
+        Noch nicht eingeplant, Stunde liegt im Fenster, und das Angebot
+        deckt mindestens ein Viertel des Bedarfs.
         """
         return [l for l in self.lasten
                 if l.verfuegbar()
                 and l.im_fenster(stunde)
-                and l.energie_wh <= max_wh]
+                and max_wh >= l.energie_wh * self.MIN_ANTEIL]
+
+    def bezugsmenge(self, last, angebot_wh: int) -> int:
+        """Wie viel dieser Last laesst sich aus dem Angebot decken?"""
+        return min(last.energie_wh, angebot_wh)
+
+    def mischpreis(self, last, bezogen: int, angebots_preis: float) -> float:
+        """
+        Durchschnittspreis pro kWh, wenn ein Teil guenstig und der Rest
+        zum Marktpreis bezogen wird.
+        """
+        if last.energie_wh <= 0:
+            return self.markt_preis
+        rest = last.energie_wh - bezogen
+        return (bezogen * angebots_preis + rest * self.markt_preis) / last.energie_wh
 
     def hat_flexibilitaet(self) -> bool:
         return any(l.verfuegbar() for l in self.lasten)
@@ -201,29 +226,49 @@ class HouseholdAgent:
         dringende = [l for l in kandidaten if l.dringend(angebot.stunde)]
 
         if dringende:
-            beste = max(dringende, key=lambda l: l.energie_wh)
-            rest = beste.stunden_bis_frist(angebot.stunde)
+            # Bei Fristdruck zaehlt, moeglichst viel guenstig zu decken.
+            beste = max(dringende,
+                        key=lambda l: self.bezugsmenge(l, angebot.menge_wh))
+            bezogen = self.bezugsmenge(beste, angebot.menge_wh)
+            rest_h = beste.stunden_bis_frist(angebot.stunde)
+            teil = ("" if bezogen >= beste.energie_wh
+                    else f", davon {bezogen} von {beste.energie_wh} Wh")
             return Zusage(
                 kaeufer=self.id,
                 last_name=beste.name,
-                menge_wh=beste.energie_wh,
-                begruendung=(f"{beste.name} muss bis {beste.spaetestens:g} Uhr laufen, "
-                             f"nur noch {rest:g} h Zeit"),
+                menge_wh=bezogen,
+                begruendung=(f"{beste.name} muss bis {beste.spaetestens:g} Uhr "
+                             f"laufen, nur noch {rest_h:g} h Zeit{teil}"),
             )
 
         # Ohne Frist lohnt sich das Verschieben nur bei echtem Preisvorteil.
         if angebot.preis_pro_kwh >= self.markt_preis:
             return None
 
-        beste = max(kandidaten, key=lambda l: l.energie_wh)
-        ersparnis = (self.markt_preis - angebot.preis_pro_kwh) * beste.energie_wh / 1000
-        return Zusage(
-            kaeufer=self.id,
-            last_name=beste.name,
-            menge_wh=beste.energie_wh,
-            begruendung=(f"{beste.name} passt ins Fenster und spart "
-                         f"{ersparnis:.4f} CHFD"),
-        )
+        # Die Last waehlen, bei der die Ersparnis am groessten ausfaellt.
+        # Das ist nicht zwingend die groesste Last: Deckt das Angebot nur
+        # einen kleinen Teil eines grossen Geraets, bringt ein kleineres,
+        # ganz gedecktes Geraet mehr.
+        def ersparnis_von(l):
+            return ((self.markt_preis - angebot.preis_pro_kwh)
+                    * self.bezugsmenge(l, angebot.menge_wh) / 1000)
+
+        beste = max(kandidaten, key=ersparnis_von)
+        bezogen = self.bezugsmenge(beste, angebot.menge_wh)
+        ersparnis = ersparnis_von(beste)
+
+        if bezogen >= beste.energie_wh:
+            grund = (f"{beste.name} passt ins Fenster und spart "
+                     f"{ersparnis:.4f} CHFD")
+        else:
+            misch = self.mischpreis(beste, bezogen, angebot.preis_pro_kwh)
+            grund = (f"{beste.name} braucht {beste.energie_wh} Wh, davon "
+                     f"{bezogen} Wh guenstig und {beste.energie_wh - bezogen} Wh "
+                     f"vom Netz - Mischpreis {misch:.3f} statt "
+                     f"{self.markt_preis:.3f}, spart {ersparnis:.4f} CHFD")
+
+        return Zusage(kaeufer=self.id, last_name=beste.name,
+                      menge_wh=bezogen, begruendung=grund)
 
     # ── Validierung ───────────────────────────────────────────────
 
@@ -255,9 +300,16 @@ class HouseholdAgent:
             return False, (f"{zusage.menge_wh} Wh zugesagt, aber nur "
                            f"{angebot.menge_wh} Wh im Angebot")
 
-        if zusage.menge_wh != last.energie_wh:
-            return False, (f"{last.name} braucht {last.energie_wh} Wh, "
+        # Mehr als der Bedarf waere Energie, die niemand verbraucht.
+        if zusage.menge_wh > last.energie_wh:
+            return False, (f"{last.name} braucht nur {last.energie_wh} Wh, "
                            f"zugesagt wurden {zusage.menge_wh} Wh")
+
+        # Teilmengen sind erlaubt, Kleinstmengen nicht.
+        mindest = int(last.energie_wh * self.MIN_ANTEIL)
+        if zusage.menge_wh < mindest:
+            return False, (f"{zusage.menge_wh} Wh decken weniger als ein "
+                           f"Viertel von {last.name} ({last.energie_wh} Wh)")
 
         return True, last
 
@@ -268,9 +320,17 @@ class HouseholdAgent:
             self.protokoll.append(f"[abgelehnt] {ergebnis}")
             return False
         ergebnis.geplant_fuer = angebot.stunde
-        self.protokoll.append(
-            f"[zugesagt] {ergebnis.name} auf {angebot.stunde:g} Uhr verschoben, "
-            f"{ergebnis.energie_wh} Wh von {angebot.verkaeufer}")
+        if zusage.menge_wh >= ergebnis.energie_wh:
+            self.protokoll.append(
+                f"[zugesagt] {ergebnis.name} auf {angebot.stunde:g} Uhr "
+                f"verschoben, {ergebnis.energie_wh} Wh von {angebot.verkaeufer}")
+        else:
+            # Die Last laeuft trotzdem vollstaendig - nur ein Teil davon
+            # wird guenstig gedeckt, der Rest kommt aus dem Netz.
+            self.protokoll.append(
+                f"[zugesagt] {ergebnis.name} auf {angebot.stunde:g} Uhr "
+                f"verschoben, {zusage.menge_wh} von {ergebnis.energie_wh} Wh "
+                f"von {angebot.verkaeufer}, Rest vom Netz")
         return True
 
     def notladung(self, stunde: float):

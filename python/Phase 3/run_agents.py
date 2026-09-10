@@ -176,7 +176,13 @@ Angebot von {verkaeufer}:
 Regeln:
 - Du darfst nur ein Geraet nennen, das JETZT verfuegbar ist und dessen
   Zeitfenster {stunde:g} Uhr enthaelt.
-- menge_wh muss exakt dem Energiebedarf des Geraets entsprechen.
+- Das Angebot muss den Bedarf nicht ganz decken. Reicht es nur fuer einen
+  Teil, laeuft das Geraet trotzdem - der Rest kommt zum Marktpreis aus dem
+  Netz, und der Mischpreis liegt immer noch unter {markt:.3f}.
+- menge_wh ist die Menge, die du AUS DEM ANGEBOT beziehst: der
+  Energiebedarf des Geraets, oder die angebotenen {menge} Wh, je nachdem
+  was kleiner ist. Nie mehr als eines von beiden.
+- Weniger als ein Viertel des Bedarfs lohnt den Aufwand nicht - dann lehne ab.
 - Passt kein Geraet, lehne ab: annehmen = false, last = null.
 - Wenn du annimmst, MUSST du ein Geraet benennen. annehmen = true mit
   last = null ist ungueltig.
@@ -222,80 +228,125 @@ def _frage_agent(agent, angebot, modell):
 def verhandle_angebot(angebot, agenten, modus="regelbasiert",
                       modell="gemma4:e2b", protokoll=None):
     """
-    Laesst alle Agenten auf ein Angebot antworten und vergibt den Zuschlag.
+    Laesst alle Agenten auf ein Angebot antworten und verteilt die Menge.
 
-    Gibt (gewinner_agent, zusage) zurueck oder (None, None), wenn niemand
-    zusagt. protokoll ist eine Liste, in die lesbare Zeilen fuer die
-    Aufzeichnung geschrieben werden.
+    Anders als eine Auktion mit einem einzigen Gewinner wird hier so lange
+    zugeteilt, bis die Menge aufgebraucht oder niemand mehr Verwendung
+    dafuer hat. Der Grund ist physikalisch: Was nicht verbraucht wird,
+    fliesst zum schlechteren Tarif ins Netz zurueck. Ein Rest von 700 Wh
+    ist fuer den Verkaeufer wertlos, fuer einen zweiten Nachbarn aber die
+    halbe Waschmaschine.
+
+    Gibt eine Liste von (agent, zusage) zurueck - im Regelfall eine oder
+    zwei Zuteilungen, bei grossen Angeboten auch mehr.
     """
     if protokoll is None:
         protokoll = []
 
     protokoll.append(f"\n{angebot.beschreibung()}")
 
-    kandidaten = []
+    offen = angebot.menge_wh
+    vergeben = []
+    schon_dran = set()
 
-    for agent in agenten:
-        if agent.id == angebot.verkaeufer:
-            continue
+    # Mehrere Vergaberunden, bis nichts mehr passt.
+    while offen > 0:
+        rest_angebot = Angebot(
+            verkaeufer=angebot.verkaeufer,
+            stunde=angebot.stunde,
+            menge_wh=offen,
+            preis_pro_kwh=angebot.preis_pro_kwh,
+        )
 
-        zusage = None
-        quelle = "Regel"
+        kandidaten = []
 
-        if modus == "llm":
-            try:
-                antwort = _frage_agent(agent, angebot, modell)
-                if antwort is False:
-                    protokoll.append(f"  {agent.id}: lehnt ab")
-                    continue
-                if antwort is not None:
-                    zusage = antwort
-                    quelle = "LLM"
-            except LLMNichtErreichbar as e:
-                protokoll.append(f"  [{e}] - weiter regelbasiert")
-                modus = "regelbasiert"
-
-        if zusage is None:
-            zusage = agent.entscheide_regelbasiert(angebot)
-            quelle = "Regel"
-
-        if zusage is None:
-            protokoll.append(f"  {agent.id}: nichts Passendes")
-            continue
-
-        # Jede Zusage - egal woher - muss durch die Pruefung.
-        gueltig, ergebnis = agent.pruefe_zusage(zusage, angebot)
-        if not gueltig:
-            protokoll.append(f"  {agent.id}: Zusage verworfen ({ergebnis})")
-            # Ein LLM-Fehler bedeutet nicht, dass der Agent nichts kann.
-            # Das Regelwerk bekommt eine zweite Chance.
-            if quelle == "LLM":
-                zusage = agent.entscheide_regelbasiert(angebot)
-                if zusage is None:
-                    continue
-                gueltig, ergebnis = agent.pruefe_zusage(zusage, angebot)
-                if not gueltig:
-                    continue
-                protokoll.append(f"  {agent.id}: stattdessen regelbasiert "
-                                 f"{zusage.last_name}")
-            else:
+        for agent in agenten:
+            if agent.id == angebot.verkaeufer:
+                continue
+            # Wer schon eine Zuteilung hat, ist in dieser Runde durch.
+            # Sonst wuerde ein Haushalt mit vielen Geraeten das ganze
+            # Angebot aufsaugen, bevor die Nachbarn drankommen.
+            if agent.id in schon_dran:
                 continue
 
-        protokoll.append(f"  {agent.id}: bietet fuer {zusage.last_name} "
-                         f"({zusage.menge_wh} Wh) - {zusage.begruendung}")
-        kandidaten.append((agent, zusage))
+            zusage = None
+            quelle = "Regel"
 
-    if not kandidaten:
+            if modus == "llm":
+                try:
+                    antwort = _frage_agent(agent, rest_angebot, modell)
+                    if antwort is False:
+                        if not vergeben:
+                            protokoll.append(f"  {agent.id}: lehnt ab")
+                        continue
+                    if antwort is not None:
+                        zusage = antwort
+                        quelle = "LLM"
+                except LLMNichtErreichbar as e:
+                    protokoll.append(f"  [{e}] - weiter regelbasiert")
+                    modus = "regelbasiert"
+
+            if zusage is None:
+                zusage = agent.entscheide_regelbasiert(rest_angebot)
+                quelle = "Regel"
+
+            if zusage is None:
+                if not vergeben:
+                    protokoll.append(f"  {agent.id}: nichts Passendes")
+                continue
+
+            gueltig, ergebnis = agent.pruefe_zusage(zusage, rest_angebot)
+            if not gueltig:
+                protokoll.append(f"  {agent.id}: Zusage verworfen ({ergebnis})")
+                if quelle == "LLM":
+                    zusage = agent.entscheide_regelbasiert(rest_angebot)
+                    if zusage is None:
+                        continue
+                    gueltig, ergebnis = agent.pruefe_zusage(zusage, rest_angebot)
+                    if not gueltig:
+                        continue
+                    protokoll.append(f"  {agent.id}: stattdessen regelbasiert "
+                                     f"{zusage.last_name}")
+                else:
+                    continue
+
+            protokoll.append(f"  {agent.id}: bietet fuer {zusage.last_name} "
+                             f"({zusage.menge_wh} Wh) - {zusage.begruendung}")
+            kandidaten.append((agent, zusage))
+
+        if not kandidaten:
+            break
+
+        # Zuschlag an den, der den groessten ANTEIL seines Bedarfs deckt -
+        # nicht an die groesste absolute Menge.
+        #
+        # Der Unterschied ist wesentlich: Bei 1900 Wh will ein Haushalt
+        # 1200 fuer seine ganze Waschmaschine, ein anderer 1900 als zwei
+        # Drittel seines Autos. Nach der absoluten Menge gewinnt das Auto,
+        # und es bleibt nichts uebrig. Nach dem Anteil gewinnt die
+        # Waschmaschine, und die verbleibenden 700 Wh gehen an das Auto -
+        # beide bekommen etwas, und das Angebot ist vollstaendig genutzt.
+        def anteil(paar):
+            agent, z = paar
+            last = next((l for l in agent.lasten if l.name == z.last_name), None)
+            if last is None or last.energie_wh <= 0:
+                return 0.0
+            return z.menge_wh / last.energie_wh
+
+        gewinner, zusage = max(kandidaten, key=lambda k: (anteil(k), k[1].menge_wh))
+        gewinner.uebernehme(zusage, rest_angebot)
+        protokoll.append(f"  -> Zuschlag an {gewinner.id} fuer "
+                         f"{zusage.menge_wh} Wh")
+        vergeben.append((gewinner, zusage))
+        schon_dran.add(gewinner.id)
+        offen -= zusage.menge_wh
+
+    if not vergeben:
         protokoll.append("  -> niemand nimmt an")
-        return None, None
+    elif offen > 0:
+        protokoll.append(f"  {offen} Wh bleiben uebrig und gehen ins Netz")
 
-    # Zuschlag an die groesste Menge: So wird moeglichst viel guenstige
-    # Energie tatsaechlich genutzt statt in kleinen Portionen zu verpuffen.
-    gewinner, zusage = max(kandidaten, key=lambda k: k[1].menge_wh)
-    gewinner.uebernehme(zusage, angebot)
-    protokoll.append(f"  -> Zuschlag an {gewinner.id} fuer "
-                     f"{zusage.menge_wh} Wh")
-    return gewinner, zusage
+    return vergeben
 
 
 def verhandlungsrunde(agenten, ueberschuesse, markt_preis=0.10,
@@ -323,9 +374,9 @@ def verhandlungsrunde(agenten, ueberschuesse, markt_preis=0.10,
             menge_wh=menge,
             preis_pro_kwh=markt_preis * (1 - rabatt),
         )
-        gewinner, zusage = verhandle_angebot(
-            angebot, agenten, modus=modus, modell=modell, protokoll=protokoll)
-        if gewinner:
+        for gewinner, zusage in verhandle_angebot(
+                angebot, agenten, modus=modus, modell=modell,
+                protokoll=protokoll):
             vereinbarungen.append((angebot, gewinner, zusage))
 
     return vereinbarungen, protokoll

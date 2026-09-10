@@ -208,6 +208,154 @@ def lies_kalender(config):
     return ergebnis, gewaehlt
 
 
+
+def hole_speicher(config):
+    """
+    Liest die Entscheidungen des BatteryManagers.
+
+    Jedes DecisionMade-Event traegt Aktion, Menge, Slot und eine
+    Begruendung im Klartext. Daraus laesst sich der Energiefluss ueber den
+    Tag zeichnen: Laden am Mittag, Entladen am Abend.
+
+    Der Ladestand selbst steht nicht im Event. Er wird aus den Fluessen
+    fortgeschrieben - relativ, nicht absolut, denn der Startwert ist
+    nicht bekannt. Fuer die Aussage reicht das: Sichtbar ist, wie der
+    Speicher gefuellt und wieder geleert wird.
+    """
+    bc = config["blockchain"]
+    adresse = bc.get("battery_manager_address", "")
+    if not adresse or "REPLACE" in adresse:
+        return {}, {}
+
+    w3 = Web3(Web3.HTTPProvider(bc["rpc_url"]))
+    w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
+
+    try:
+        with open(ABI_DIR / "BatteryManager.json") as f:
+            abi = json.load(f)["abi"]
+    except FileNotFoundError:
+        return {}, {}
+
+    bm = w3.eth.contract(address=Web3.to_checksum_address(adresse), abi=abi)
+    namen = {Web3.to_checksum_address(h["address"]): h["id"]
+             for h in config["households"]}
+
+    # 0 = IDLE, 1 = CHARGE, 2 = DISCHARGE
+    AKTION = {0: "idle", 1: "laden", 2: "entladen"}
+
+    latest = w3.eth.block_number
+    start = max(0, latest - 20000)
+    verlauf = defaultdict(list)
+
+    print(f"  Lese DecisionMade aus Bloecken {start} bis {latest} ...")
+    b = start
+    while b <= latest:
+        e = min(b + CHUNK - 1, latest)
+        try:
+            for ev in bm.events.DecisionMade.get_logs(from_block=b, to_block=e):
+                a = ev["args"]
+                if a["household"] not in namen:
+                    continue
+                verlauf[namen[a["household"]]].append({
+                    "slot": int(a["slot"]),
+                    "aktion": AKTION.get(int(a["action"]), "?"),
+                    "wh": int(a["amountWh"]),
+                    "grund": str(a.get("reason", "")),
+                })
+        except Exception:
+            pass
+        b = e + 1
+
+    # Kennzahlen je Haushalt
+    stand = {}
+    for name, eintraege in verlauf.items():
+        geladen = sum(e["wh"] for e in eintraege if e["aktion"] == "laden")
+        entladen = sum(e["wh"] for e in eintraege if e["aktion"] == "entladen")
+        gruende = defaultdict(int)
+        for e in eintraege:
+            if e["grund"]:
+                gruende[e["grund"]] += 1
+        stand[name] = {
+            "entscheidungen": len(eintraege),
+            "laden": sum(1 for e in eintraege if e["aktion"] == "laden"),
+            "entladen": sum(1 for e in eintraege if e["aktion"] == "entladen"),
+            "idle": sum(1 for e in eintraege if e["aktion"] == "idle"),
+            "wh_geladen": geladen,
+            "wh_entladen": entladen,
+            "haeufigster_grund": max(gruende.items(), key=lambda g: g[1])[0]
+                                 if gruende else "",
+        }
+
+    return dict(verlauf), stand
+
+
+def speicher_diagramm(verlauf, breite=880, hoehe=260):
+    """
+    Zeichnet den Energiefluss des Speichers: Laden nach oben, Entladen
+    nach unten, Slot auf der X-Achse.
+
+    Die Nulllinie in der Mitte macht sofort sichtbar, wann der Speicher
+    aufnimmt und wann er abgibt - deutlicher als eine reine Fuellstands-
+    kurve, weil man die Richtung sieht.
+    """
+    eintraege = [(name, e) for name, reihe in verlauf.items()
+                 for e in reihe if e["aktion"] != "idle"]
+    if len(eintraege) < 2:
+        return "<p class='hinweis'>Noch keine Speicherentscheidungen.</p>"
+
+    slots = [e["slot"] for _, e in eintraege]
+    s_min, s_max = min(slots), max(slots)
+    if s_max == s_min:
+        return "<p class='hinweis'>Alle Entscheidungen im selben Slot.</p>"
+
+    groesste = max(e["wh"] for _, e in eintraege) or 1
+
+    rand_l, rand_r, rand_o, rand_u = 55, 20, 20, 40
+    pb = breite - rand_l - rand_r
+    ph = hoehe - rand_o - rand_u
+    mitte = rand_o + ph / 2
+
+    def x_von(slot):
+        return rand_l + (slot - s_min) / (s_max - s_min) * pb
+
+    teile = [f'<svg viewBox="0 0 {breite} {hoehe}" class="chart">']
+
+    # Achsenbeschriftung
+    for anteil, txt in ((1.0, f"+{groesste}"), (0.0, "0"),
+                        (-1.0, f"-{groesste}")):
+        y = mitte - anteil * (ph / 2)
+        teile.append(f'<line x1="{rand_l}" y1="{y:.0f}" x2="{breite-rand_r}" '
+                     f'y2="{y:.0f}" class="{"neutral" if anteil == 0 else "grid"}"/>')
+        teile.append(f'<text x="{rand_l-8}" y="{y+4:.0f}" class="tick" '
+                     f'text-anchor="end">{txt}</text>')
+
+    breite_balken = max(2.0, pb / max(len(eintraege), 1) * 0.7)
+
+    for name, e in eintraege:
+        farbe = FARBEN.get(name, "#666")
+        hoch = (e["wh"] / groesste) * (ph / 2)
+        x = x_von(e["slot"]) - breite_balken / 2
+        if e["aktion"] == "laden":
+            y, h = mitte - hoch, hoch
+        else:
+            y, h = mitte, hoch
+        teile.append(f'<rect x="{x:.1f}" y="{y:.1f}" '
+                     f'width="{breite_balken:.1f}" height="{max(h,1):.1f}" '
+                     f'fill="{farbe}" opacity="0.75">'
+                     f'<title>{name}: {e["aktion"]} {e["wh"]} Wh '
+                     f'(Slot {e["slot"]}) - {e["grund"]}</title></rect>')
+
+    teile.append(f'<text x="{rand_l}" y="{rand_o-6}" class="tick">Laden</text>')
+    teile.append(f'<text x="{rand_l}" y="{hoehe-rand_u+14}" class="tick">'
+                 f'Entladen</text>')
+    teile.append(f'<text x="{breite/2:.0f}" y="{hoehe-8}" class="tick" '
+                 f'text-anchor="middle">Abrechnungsslots '
+                 f'{s_min} bis {s_max}</text>')
+    teile.append("</svg>")
+    return "".join(teile)
+
+
+
 # ─────────────────────────────────────────────────────────────────────
 #  Diagramm als SVG
 # ─────────────────────────────────────────────────────────────────────
@@ -269,8 +417,16 @@ def score_diagramm(verlauf, breite=880, hoehe=300):
         sortiert = sorted(reihe, key=lambda p: p[0])
         koords = [f"{x_von(b):.1f},{y_von(score):.1f}"
                   for b, score, _ in sortiert]
+
+        # Haushalte ohne Agent gestrichelt: Ihr Verlauf ist keine
+        # Lernkurve, sondern zeigt nur, wie weit ihre feste Schaetzung je
+        # nach Tageszeit danebenliegt. Durchgezogen neben den anderen
+        # gezeichnet, wuerde er eine Entwicklung suggerieren, die es
+        # nicht gibt.
+        stil = ('stroke-dasharray="6 4" ' if ROLLEN.get(name) is None
+                else "")
         teile.append(f'<polyline points="{" ".join(koords)}" fill="none" '
-                     f'stroke="{farbe}" stroke-width="2.5"/>')
+                     f'stroke="{farbe}" stroke-width="2.5" {stil}/>')
         lx, ly = koords[-1].split(",")
         teile.append(f'<circle cx="{lx}" cy="{ly}" r="4" fill="{farbe}"/>')
 
@@ -284,8 +440,11 @@ def score_diagramm(verlauf, breite=880, hoehe=300):
 #  HTML
 # ─────────────────────────────────────────────────────────────────────
 
-def baue_html(runden, verlauf, stand, kalender, config, kal_tag=None):
+def baue_html(runden, verlauf, stand, kalender, config, kal_tag=None,
+              speicher=None, speicher_stand=None):
     bc = config["blockchain"]
+    speicher = speicher or {}
+    speicher_stand = speicher_stand or {}
 
     # ── Verhandlung als Dialog ────────────────────────────────────
     # Nur die Runden zeigen, in denen tatsaechlich etwas zustande kam.
@@ -325,12 +484,27 @@ def baue_html(runden, verlauf, stand, kalender, config, kal_tag=None):
             dialog.append(f'<div class="runde"><div class="angebot">'
                           f'{r["angebot"]}</div>')
 
+        # Wer den Zuschlag bekommen hat, steht in der Zuschlagszeile.
+        # Nur dessen Gebot wird gruen hervorgehoben - die anderen haben
+        # mitgeboten, aber nichts bekommen. Ohne diese Unterscheidung
+        # laese sich jede Antwort wie eine Uebernahme.
+        gewinner = set()
+        if r["zuschlag"]:
+            mz = re.search(r"Zuschlag an (\S+)", r["zuschlag"])
+            if mz:
+                gewinner.add(mz.group(1))
+
         for a in r["antworten"]:
             ma = re.match(r"(\S+): (.*)", a)
             if not ma:
                 continue
             wer, was = ma.groups()
             farbe = FARBEN.get(wer, "#666")
+            hat_zuschlag = wer in gewinner
+
+            if "bleiben uebrig" in a:
+                dialog.append(f'<div class="keiner">{a}</div>')
+                continue
             if "laedt" in was and "vollen Preis" in was:
                 dialog.append(
                     f'<div class="antwort notladung">'
@@ -355,14 +529,42 @@ def baue_html(runden, verlauf, stand, kalender, config, kal_tag=None):
                 if mb:
                     last, menge, grund = mb.groups()
                     eilig = "muss bis" in grund
-                    cls = "zusage frist" if eilig else "zusage"
-                    einleitung = ("Ich nehme sie &ndash; ich habe keine Wahl mehr."
-                                  if eilig else "Ich nehme sie.")
+                    teil = "vom Netz" in grund
+
+                    cls = "gebot"
+                    if hat_zuschlag:
+                        cls += " zusage frist" if eilig else " zusage"
+                    elif eilig:
+                        cls += " frist"
+
+                    if hat_zuschlag:
+                        einleitung = ("Ich nehme sie &ndash; ich habe keine "
+                                      "Wahl mehr." if eilig else "Ich nehme sie.")
+                        verb = "starte" if teil else "lege"
+                    else:
+                        einleitung = ("Ich braeuchte sie dringend."
+                                      if eilig else "Ich haette Verwendung dafuer.")
+                        verb = "wuerde starten" if teil else "koennte legen"
+
+                    if teil:
+                        satz = (f'Ich {verb} meine <b>{last}</b> und decke '
+                                f'<b>{menge} Wh</b> davon aus deinem Angebot, '
+                                f'den Rest vom Netz.')
+                        if not hat_zuschlag:
+                            satz = (f'Ich koennte meine <b>{last}</b> starten und '
+                                    f'<b>{menge} Wh</b> davon aus deinem Angebot '
+                                    f'decken, den Rest vom Netz.')
+                    else:
+                        satz = (f'Ich {verb} meine <b>{last}</b> ({menge} Wh) '
+                                f'in dieses Fenster.')
+                        if not hat_zuschlag:
+                            satz = (f'Ich koennte meine <b>{last}</b> ({menge} Wh) '
+                                    f'in dieses Fenster legen.')
+
                     dialog.append(
                         f'<div class="antwort {cls}">'
                         f'<span class="wer" style="color:{farbe}">{wer}</span>'
-                        f'<span class="text">{einleitung} Ich lege '
-                        f'meine <b>{last}</b> ({menge} Wh) in dieses Fenster.'
+                        f'<span class="text">{einleitung} {satz}'
                         f'<br><span class="grund">{grund}</span></span></div>')
                 else:
                     dialog.append(f'<div class="antwort"><span class="wer">'
@@ -431,6 +633,19 @@ def baue_html(runden, verlauf, stand, kalender, config, kal_tag=None):
             f'<td class="tag">{"".join(balken)}</td>'
             f'<td class="wirkung">{wirkung}</td></tr>')
 
+    # ── Speicher ──────────────────────────────────────────────────
+    sp_zeilen = []
+    for hid in sorted(speicher_stand):
+        sp = speicher_stand[hid]
+        farbe = FARBEN.get(hid, "#666")
+        bilanz = sp["wh_geladen"] - sp["wh_entladen"]
+        sp_zeilen.append(
+            f'<tr><td class="hid" style="color:{farbe}">{hid}</td>'
+            f'<td>{sp["laden"]}&times; / {sp["wh_geladen"]} Wh</td>'
+            f'<td>{sp["entladen"]}&times; / {sp["wh_entladen"]} Wh</td>'
+            f'<td>{sp["idle"]}&times;</td>'
+            f'<td class="wirkung">{sp["haeufigster_grund"]}</td></tr>')
+
     # ── Ergebnistabelle ───────────────────────────────────────────
     erg_zeilen = []
     for hid in sorted(stand):
@@ -472,6 +687,7 @@ def baue_html(runden, verlauf, stand, kalender, config, kal_tag=None):
               margin-bottom: 8px; }}
   .antwort {{ background: #f8f9fa; border-radius: 8px; padding: 10px 14px;
               margin: 6px 0 6px 28px; font-size: 14px; }}
+  .antwort.gebot {{ background: #f8f9fa; }}
   .antwort.zusage {{ background: #f0fdf4; }}
   .antwort.ablehnung {{ background: #fafafa; color: #777; }}
   .antwort.verworfen {{ background: #fef2f2; color: #991b1b; }}
@@ -509,6 +725,9 @@ def baue_html(runden, verlauf, stand, kalender, config, kal_tag=None):
   .legende {{ display: flex; gap: 20px; margin-top: 10px; font-size: 13px; }}
   .legende span {{ display: flex; align-items: center; gap: 6px; }}
   .punkt {{ width: 11px; height: 3px; border-radius: 2px; }}
+  .punkt.gestrichelt {{ background-image: linear-gradient(90deg,
+      currentColor 0 55%, transparent 55% 100%);
+      background-size: 5px 3px; }}
   .hinweis {{ color: #888; font-style: italic; }}
   .adressen {{ font-family: ui-monospace, Consolas, monospace; font-size: 12px;
                color: #666; margin-top: 36px; line-height: 1.9; }}
@@ -530,9 +749,19 @@ def baue_html(runden, verlauf, stand, kalender, config, kal_tag=None):
     Manche Geraete haben eine harte Frist &ndash; das E-Auto muss um sechs
     abfahrbereit sein. Rueckt sie naeher, nimmt der Agent auch ein Angebot
     ohne Ersparnis, und im Notfall laedt er zum vollen Netzpreis.
+    <br><br>
+    Ein Angebot muss den Bedarf nicht ganz decken: Deckt der Nachbar 800
+    von 1200 Wh, kommen die restlichen 400 aus dem Netz, und der Mischpreis
+    liegt trotzdem darunter. Bleibt nach einem Zuschlag etwas uebrig, geht
+    es an den naechsten &ndash; sonst fliesst es zum schlechteren Tarif
+    zurueck ins Netz.
   </div>
   <div class="karte">{"".join(dialog)}</div>
   <div class="erklaerung" style="margin-top:8px">
+    Gruen hinterlegt ist, wer den Zuschlag bekommen hat. Die uebrigen
+    Antworten sind Gebote &ndash; sie haetten die Energie gebrauchen
+    koennen, kamen aber nicht zum Zug oder erst mit der Restmenge.
+    <br><br>
     Gezeigt sind die Runden, in denen eine Verschiebung zustande kam.
     Ist der Ueberschuss kleiner als jedes verschiebbare Geraet, lehnen alle
     ab &ndash; das passiert morgens und abends regelmaessig.
@@ -552,16 +781,45 @@ def baue_html(runden, verlauf, stand, kalender, config, kal_tag=None):
     </table>
   </div>
 
+  <h2>Was der Speicher tut</h2>
+  <div class="erklaerung">
+    Der Speicher entscheidet in jedem Slot selbst, ob er laedt, abgibt
+    oder nichts tut. Ueber der Nulllinie nimmt er auf, darunter gibt er ab.
+    Jeder Balken traegt die Begruendung des Contracts als Tooltip.
+    <br><br>
+    Eine Entscheidung war dabei wesentlich: Der Speicher laedt nur bis zur
+    Haelfte seiner Kapazitaet, nicht bis zum Rand. Mit einer hoeheren
+    Grenze schluckte er den ganzen Mittagsueberschuss, und der Handel kam
+    zum Erliegen &ndash; jeder Haushalt fuellte erst seinen eigenen Speicher
+    und hatte nichts mehr fuer die Nachbarn. Bei fuenfzig Prozent bleibt
+    genug fuer den Markt, und nachts reicht der Rest fuer das E-Auto.
+  </div>
+  <div class="karte">
+    {speicher_diagramm(speicher)}
+    <table style="margin-top:18px">
+      <tr><th>Haushalt</th><th>Geladen</th><th>Abgegeben</th>
+          <th>Nichts getan</th><th>Haeufigste Begruendung</th></tr>
+      {"".join(sp_zeilen) or '<tr><td colspan="5" class="hinweis">Keine Speicherdaten.</td></tr>'}
+    </table>
+  </div>
+
   <h2>Reputation ueber die Zeit</h2>
   <div class="erklaerung">
     Wer seinen Verbrauch vorher meldet und dann trifft, baut Reputation auf.
     Der Wert ist ein gleitender Durchschnitt ueber acht Slots: Ein einzelner
     Fehltritt zaehlt wenig, dauerhafte Ungenauigkeit schon.
+    <br><br>
+    Nur die durchgezogenen Linien sind Lernkurven. Der gestrichelte
+    Haushalt hat keinen Agenten und meldet immer denselben Tagesdurchschnitt
+    &ndash; sein Verlauf zeigt keine Entwicklung, sondern wie weit diese
+    Pauschale je nach Tageszeit danebenliegt. Abends verbraucht er das
+    Doppelte, nachts ein Drittel davon. Zweimal am Tag trifft die Schaetzung
+    zufaellig, den Rest der Zeit nicht.
   </div>
   <div class="karte">
     {score_diagramm(verlauf)}
     <div class="legende">
-      {"".join(f'<span><i class="punkt" style="background:{FARBEN.get(n, "#666")}"></i>{n}</span>' for n in sorted(verlauf))}
+      {"".join(f'<span><i class="punkt{"" if ROLLEN.get(n) else " gestrichelt"}" style="background:{FARBEN.get(n, "#666")}"></i>{n}{"" if ROLLEN.get(n) else " (ohne Agent)"}</span>' for n in sorted(verlauf))}
     </div>
   </div>
 
@@ -605,8 +863,12 @@ def main():
     verlauf, stand = hole_scores(config)
     print(f"  Score-Verlauf fuer {len(verlauf)} Haushalte")
 
+    speicher, speicher_stand = hole_speicher(config)
+    print(f"  Speicherdaten fuer {len(speicher)} Haushalte")
+
     AUSGABE.write_text(
-        baue_html(runden, verlauf, stand, kalender, config, kal_tag),
+        baue_html(runden, verlauf, stand, kalender, config, kal_tag,
+                  speicher, speicher_stand),
         encoding="utf-8")
     print(f"\nFertig: {AUSGABE}")
     print("Im Browser oeffnen - die Datei ist eigenstaendig, ohne Internet.")

@@ -49,7 +49,7 @@
     "oracle_storage_address": "0x61769c1C299495194D7Df49030019e613d13a88D",
     "p2p_market_address": "0x1c33292F3Fe9720C78606A1bB714E7D8FEd37E02",
     "battery_manager_address": "0x2d074bC0c484b5012ceA2D2d1378297BF18802eb",
-    "incentive_controller_address": "0xCC43E052165DaDE9154718f3eB888690860B3c33",
+    "incentive_controller_address": "0x8A4F38Da46371C706DAC7a77AD128542AE2Dc638",
     "stablecoin_address": "0x4BaBBaE33998fEd65Ada53bc41CeAa3Cde7F7B46"
   }
 }

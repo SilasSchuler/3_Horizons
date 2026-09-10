@@ -1,0 +1,34 @@
+### Zyklus 1
+
+house_01 bietet 700 Wh um 18 Uhr zu 0.080 CHFD/kWh
+  house_02: bietet fuer waschmaschine (700 Wh) - waschmaschine braucht 1200 Wh, davon 700 Wh guenstig und 500 Wh vom Netz - Mischpreis 0.088 statt 0.100, spart 0.0140 CHFD
+  house_04: bietet fuer waschmaschine (700 Wh) - waschmaschine braucht 1200 Wh, davon 700 Wh guenstig und 500 Wh vom Netz - Mischpreis 0.088 statt 0.100, spart 0.0140 CHFD
+  house_05: bietet fuer waermepumpe (700 Wh) - waermepumpe braucht 2000 Wh, davon 700 Wh guenstig und 1300 Wh vom Netz - Mischpreis 0.093 statt 0.100, spart 0.0140 CHFD
+  -> Zuschlag an house_02 fuer 700 Wh
+### Zyklus 2
+
+house_01 bietet 1900 Wh um 20 Uhr zu 0.080 CHFD/kWh
+  house_02: bietet fuer waschmaschine (1200 Wh) - waschmaschine passt ins Fenster und spart 0.0240 CHFD
+  house_04: bietet fuer eauto (1900 Wh) - eauto braucht 2800 Wh, davon 1900 Wh guenstig und 900 Wh vom Netz - Mischpreis 0.086 statt 0.100, spart 0.0380 CHFD
+  house_05: bietet fuer waermepumpe (1900 Wh) - waermepumpe braucht 2000 Wh, davon 1900 Wh guenstig und 100 Wh vom Netz - Mischpreis 0.081 statt 0.100, spart 0.0380 CHFD
+  -> Zuschlag an house_04 fuer 1900 Wh
+### Zyklus 3
+### Zyklus 4
+
+house_01 bietet 2900 Wh um 0 Uhr zu 0.080 CHFD/kWh
+  house_02: nichts Passendes
+  house_04: bietet fuer eauto (2800 Wh) - eauto passt ins Fenster und spart 0.0560 CHFD
+  house_05: nichts Passendes
+  -> Zuschlag an house_04 fuer 2800 Wh
+  100 Wh bleiben uebrig und gehen ins Netz
+### Zyklus 5
+
+house_05 bietet 3000 Wh um 2 Uhr zu 0.080 CHFD/kWh
+  house_01: nichts Passendes
+  house_02: nichts Passendes
+  house_04: bietet fuer eauto (2800 Wh) - eauto muss bis 6 Uhr laufen, nur noch 4 h Zeit
+  -> Zuschlag an house_04 fuer 2800 Wh
+  200 Wh bleiben uebrig und gehen ins Netz
+### Zyklus 6
+
+  house_04: laedt eauto (2800 Wh) zum vollen Preis - Frist 6 Uhr, kein guenstiges Angebot mehr abzuwarten
