@@ -41,6 +41,9 @@
 <section>
   <h2>Configuration</h2>
   <div id="contractList"></div>
+  <br>
+  <button id="saveConfigBtn" onclick="saveConfig()">Save Configuration</button>
+  <span id="configSaveStatus"></span>
 </section>
 
 <section>
@@ -58,6 +61,18 @@
 
 <section>
   <h2>Market actions</h2>
+
+  <p></p>
+  <p></p>
+  <p></p>
+  <p></p>
+  <p></p>
+  <p></p>
+  <p></p>
+  <p></p>
+
+
+
   <div class="row">
     <input type="text" id="registerAddrInput" placeholder="0x... household address">
     <button onclick="registerHousehold()">Register household on P2P market</button>
@@ -104,12 +119,15 @@
   const MAX_UINT256 = "115792089237316195423570985008687907853269984665640564039457584007913129639935";
 
   // key -> { abiFile, addressKey, label }
-  const CONTRACT_DEFS = {
-    oracle:     { abiFile: "OracleStorage.json",   addressKey: "oracle_storage_address", label: "Oracle" },
-    p2p:        { abiFile: "P2PEnergyMarket.json", addressKey: "p2p_market_address",     label: "P2P market" },
-    battery:    { abiFile: "BatteryManager.json",  addressKey: "battery_manager_address",label: "Battery manager" },
-    stablecoin: { abiFile: "EnergyStablecoin.json",addressKey: "stablecoin_address",    label: "Stablecoin" },
-  };
+const CONTRACT_DEFS = {
+  rpc:        { abiFile: null,                   addressKey: "rpc_url",                label: "RPC Endpoint" },
+  oracle:     { abiFile: "OracleStorage.json",   addressKey: "oracle_storage_address", label: "Oracle" },
+  p2p:        { abiFile: "P2PEnergyMarket.json", addressKey: "p2p_market_address",     label: "P2P market" },
+  battery:    { abiFile: "BatteryManager.json",  addressKey: "battery_manager_address",label: "Battery manager" },
+  stablecoin: { abiFile: "EnergyStablecoin.json",addressKey: "stablecoin_address",    label: "Stablecoin" },
+};
+  
+
 
   function isValidAddress(addr) {
     return typeof addr === "string" && /^0x[a-fA-F0-9]{40}$/.test(addr);
@@ -161,6 +179,9 @@
 
   async function buildContracts() {
     for (const [key, def] of Object.entries(CONTRACT_DEFS)) {
+      // Skip items without ABI files (like RPC URLs)
+      if (!def.abiFile) continue;
+
       const address = config?.blockchain?.[def.addressKey];
       if (!isValidAddress(address)) {
         console.warn(`Skipping ${def.label}: no valid address yet`);
@@ -257,6 +278,66 @@
       console.error("setBatteryManager failed:", err.message);
     }
   }
+
+  // Render inputs instead of static spans so the user can change addresses
+async function loadConfig() {
+  try {
+    const res = await fetch("/api/config");
+    if (!res.ok) return;
+    config = await res.json();
+
+    const contractListEl = document.getElementById("contractList");
+    contractListEl.innerHTML = Object.entries(CONTRACT_DEFS).map(([key, def]) => {
+      const addr = config.blockchain ? config.blockchain[def.addressKey] || "" : "";
+      return `<div class="row">
+        <strong>${def.label}:</strong>
+        <input type="text" id="input-${def.addressKey}" value="${addr}" placeholder="0x...">
+      </div>`;
+    }).join("");
+
+    const householdListEl = document.getElementById("householdList");
+    householdListEl.innerHTML = (config.households || []).map(h =>
+      `<div class="row"><strong>${h.name || h.id}</strong> <span class="addr">${h.address}</span></div>`
+    ).join("");
+  } catch (err) {
+    console.error("Error in loadConfig:", err);
+  }
+}
+
+// Function to collect input data and POST to backend
+async function saveConfig() {
+  const updatedBlockchain = {};
+
+  // Read current input values
+  for (const def of Object.values(CONTRACT_DEFS)) {
+    const inputEl = document.getElementById(`input-${def.addressKey}`);
+    if (inputEl) {
+      updatedBlockchain[def.addressKey] = inputEl.value.trim();
+    }
+  }
+
+  try {
+    const res = await fetch("/api/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ blockchain: updatedBlockchain }),
+    });
+
+    const statusEl = document.getElementById("configSaveStatus");
+    if (res.ok) {
+      statusEl.textContent = " Saved!";
+      statusEl.className = "status-ok";
+      await loadConfig(); // Refresh local config instance
+      if (userAccount) await buildContracts();
+    } else {
+      statusEl.textContent = " Save failed";
+      statusEl.className = "status-missing";
+    }
+  } catch (err) {
+    console.error("Error saving config:", err);
+  }
+}
+
 
   // Automatically load configuration on page load
   window.addEventListener("load", loadConfig);

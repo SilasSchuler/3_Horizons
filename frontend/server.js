@@ -22,9 +22,18 @@ const express = require("express");
 const treeKill = require("tree-kill");
 require("dotenv").config();
 
+// 1. Initialize express FIRST
+const app = express();
+
+// 2. Add middleware SECOND
+app.use(express.json());
+app.use(express.static(__dirname));
+
 const PORT = process.env.PORT || 5500;
 const PYTHON_DIR = path.resolve(__dirname, "../python");
-const CONFIG_PATH = path.join(PYTHON_DIR, "config.json");
+// Server looks for frontend/config.json first, falls back to python/config.json
+const LOCAL_CONFIG_PATH = path.join(__dirname, "config.json");
+const FALLBACK_CONFIG_PATH = path.join(PYTHON_DIR, "config.json");
 const ABI_DIR = path.join(PYTHON_DIR, "abi");
 const LOG_DIR = path.join(PYTHON_DIR, "logs");
 
@@ -40,36 +49,26 @@ const SCRIPTS = {
 /** @type {Map<string, import('child_process').ChildProcess>} */
 const runningProcesses = new Map();
 
-const app = express();
-app.use(express.static(__dirname));
+// ─────────────────────────────────────────────────────────────
+//  Functions
+// ─────────────────────────────────────────────────────────────
+
+function getActiveConfigPath() {
+  if (fs.existsSync(LOCAL_CONFIG_PATH)) {
+    return LOCAL_CONFIG_PATH;
+  }
+  return FALLBACK_CONFIG_PATH;
+}
+
 
 // ─────────────────────────────────────────────────────────────
 //  Config + ABIs
 // ─────────────────────────────────────────────────────────────
 
-// app.get("/api/config", (req, res) => {
-//   try {
-//     const config = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8"));
-//     res.json({
-//       blockchain: config.blockchain,
-//       households: config.households.map((h) => ({
-//         id: h.id,
-//         name: h.name,
-//         address: h.address,
-//       })),
-//     });
-//   } catch (err) {
-//     console.error("Failed to read config.json:", err);
-//     res.status(500).json({ error: "Could not read config.json", detail: err.message });
-//   }
-// });
-
 app.get("/api/config", (req, res) => {
   try {
-    if (!fs.existsSync(CONFIG_PATH)) {
-      return res.status(404).json({ error: `config.json not found at ${CONFIG_PATH}` });
-    }
-    const config = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8"));
+    const targetPath = getActiveConfigPath();
+    const config = JSON.parse(fs.readFileSync(targetPath, "utf-8"));
     res.json({
       blockchain: config.blockchain || {},
       households: (config.households || []).map((h) => ({
@@ -79,7 +78,39 @@ app.get("/api/config", (req, res) => {
       })),
     });
   } catch (err) {
-    res.status(500).json({ error: "Could not read config.json", detail: err.message });
+    res.status(500).json({ error: "Could not read configuration", detail: err.message });
+  }
+});
+
+app.post("/api/config", (req, res) => {
+  try {
+    const updates = req.body;
+
+    if (!updates || !updates.blockchain) {
+      return res.status(400).json({ error: "Invalid payload: missing blockchain object" });
+    }
+
+    // Read existing config (or fallback) to preserve non-blockchain metadata
+    const activePath = getActiveConfigPath();
+    const existingConfig = JSON.parse(fs.readFileSync(activePath, "utf-8"));
+
+    // Merge changes into existing structure
+    const fullConfig = {
+      ...existingConfig,
+      blockchain: {
+        ...existingConfig.blockchain,
+        ...updates.blockchain,
+      },
+    };
+
+    // Save to local frontend/config.json
+    fs.writeFileSync(LOCAL_CONFIG_PATH, JSON.stringify(fullConfig, null, 2), "utf-8");
+    console.log(`[Config] Updated configuration written to ${LOCAL_CONFIG_PATH}`);
+
+    res.json({ success: true, message: "Configuration saved successfully!" });
+  } catch (err) {
+    console.error("Failed to save config:", err);
+    res.status(500).json({ error: "Failed to write configuration file", detail: err.message });
   }
 });
 
@@ -165,7 +196,7 @@ app.post("/api/scripts/:name/stop", (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Dashboard running at http://localhost:${PORT}`);
-  console.log(`Reading contracts from: ${CONFIG_PATH}`);
+  console.log(`Reading contracts from: ${getActiveConfigPath()}`);
   console.log(`Serving ABIs from:      ${ABI_DIR}`);
 });
 
