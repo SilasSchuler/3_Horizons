@@ -141,22 +141,14 @@ app.post("/api/run-task", (req, res) => {
       console.error(`[Task Error]: ${stderr || error.message}`);
       return res.status(500).json({ success: false, error: stderr || error.message });
     }
-
-    const addrMatch = stdout.match(/0x[a-fA-F0-9]{40}/);
-    if (saveKey && addrMatch) {
-      const deployedAddress = addrMatch[0];
-      const currentConfig = JSON.parse(fs.readFileSync(activeConfigPath, "utf-8"));
-
-      currentConfig.blockchain = currentConfig.blockchain || {};
-      currentConfig.blockchain[saveKey] = deployedAddress;
-
-      fs.writeFileSync(activeConfigPath, JSON.stringify(currentConfig, null, 2), "utf-8");
-      return res.json({ success: true, output: stdout, address: deployedAddress });
-    }
-
     res.json({ success: true, output: stdout });
   });
 });
+
+
+
+
+
 
 app.get("/api/scripts/status", (req, res) => {
   const status = {};

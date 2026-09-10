@@ -89,6 +89,45 @@ def deploy(contract_name: str, constructor_args: list):
     return address
 
 
+import json
+import os
+from pathlib import Path
+
+def update_config(contract_key: str, address: str):
+    """Updates the specified contract address in config.json directly."""
+    # Resolve config path via environment variable or default fallback
+    config_path_env = os.getenv("FRONTEND_CONFIG_PATH")
+    if config_path_env:
+        config_path = Path(config_path_env).resolve()
+    else:
+        config_path = Path(__file__).parent.parent / "config.json"
+
+    if not config_path.exists():
+        print(f"⚠️  Warning: Config file not found at {config_path}")
+        return
+
+    try:
+        # Read current config
+        with open(config_path, "r", encoding="utf-8") as f:
+            config_data = json.load(f)
+
+        # Ensure nested dict exists
+        if "blockchain" not in config_data:
+            config_data["blockchain"] = {}
+
+        # Update specific address key
+        config_data["blockchain"][contract_key] = address
+
+        # Write back to disk
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(config_data, f, indent=2)
+
+        print(f"✅ Automatically updated blockchain.{contract_key} in {config_path}")
+
+    except Exception as e:
+        print(f"❌ Failed to update config.json: {e}")
+
+
 def main():
     if len(sys.argv) < 2:
         print(__doc__)
@@ -97,7 +136,7 @@ def main():
     contract_name = sys.argv[1]
     args = sys.argv[2:]
 
-    # String-Args, die wie Adressen aussehen, in checksummed-Form bringen
+    # Bring address arguments into checksum format
     constructor_args = [
         Web3.to_checksum_address(a) if a.startswith("0x") and len(a) == 42 else a
         for a in args
@@ -105,16 +144,19 @@ def main():
 
     address = deploy(contract_name, constructor_args)
 
-    # Hinweis zum Eintragen in config.json
     key_map = {
         "OracleStorage": "oracle_storage_address",
         "P2PEnergyMarket": "p2p_market_address",
         "BatteryManager": "battery_manager_address",
         "IncentiveController": "incentive_controller_address",
     }
+
     if contract_name in key_map:
-        print(f"→ Trage in config.json unter blockchain.{key_map[contract_name]} ein:")
-        print(f"  \"{address}\"")
+        config_key = key_map[contract_name]
+        print(f"→ Deployed {contract_name} at: {address}")
+        
+        # Save address directly into config.json
+        update_config(config_key, address)
 
 
 if __name__ == "__main__":

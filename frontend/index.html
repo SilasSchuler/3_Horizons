@@ -41,6 +41,56 @@
 
 
 <section>
+  <h2>Contract Deployment</h2>
+
+  <div class="action-card">
+    <div class="row">
+      <button onclick="runDeployTask('python deploy_helper.py OracleStorage', 'oracle_storage_address', 'status-deploy-oracle')">
+        Deploy Oracle Storage
+      </button>
+      <span id="status-deploy-oracle" class="status-icon"></span>
+    </div>
+  </div>
+
+  <div class="action-card">
+    <div class="row">
+      <strong>Oracle address:</strong>
+      <span id="display-oracle-addr" class="addr">(not loaded)</span>
+    </div>
+    <div class="row">
+      <button onclick="deployBatteryManager()">Deploy Battery Manager</button>
+      <span id="status-deploy-battery" class="status-icon"></span>
+    </div>
+  </div>
+
+  <div class="action-card">
+    <div class="row">
+      <strong>Stablecoin address:</strong>
+      <span id="display-stablecoin-addr" class="addr">(not loaded)</span>
+    </div>
+    <div class="row">
+      <strong>Oracle address:</strong>
+      <span id="display-oracle-addr-2" class="addr">(not loaded)</span>
+    </div>
+    <div class="row">
+      <button onclick="deployP2PMarket()">Deploy P2P Energy Market</button>
+      <span id="status-deploy-p2p" class="status-icon"></span>
+    </div>
+  </div>
+
+
+  <h2>Registration</h2>
+  <div class="action-card">
+    <div class="row">
+      <button onclick="oracleRegisterHouseholds()">Register Households in Oracle</button>
+      <span id="status-oracle-register" class="status-icon"></span>
+    </div>
+  </div>
+</section>
+
+
+
+<section>
   <h2>Wallet</h2>
   <div class="row">
     <button id="connectBtn" onclick="connectWallet()">Connect MetaMask</button>
@@ -104,6 +154,16 @@ const CONTRACT_DEFS = {
         return;
       }
       config = await res.json();
+      const oracleAddr = config.blockchain?.oracle_storage_address;
+      const stablecoinAddr = config.blockchain?.stablecoin_address;
+
+      const oracleEl1 = document.getElementById("display-oracle-addr");
+      const oracleEl2 = document.getElementById("display-oracle-addr-2");
+      const stablecoinEl = document.getElementById("display-stablecoin-addr");
+
+      if (oracleEl1) oracleEl1.textContent = oracleAddr || "(missing)";
+      if (oracleEl2) oracleEl2.textContent = oracleAddr || "(missing)";
+      if (stablecoinEl) stablecoinEl.textContent = stablecoinAddr || "(missing)";
 
       const contractListEl = document.getElementById("contractList");
       contractListEl.innerHTML = Object.entries(CONTRACT_DEFS).map(([key, def]) => {
@@ -272,10 +332,19 @@ async function saveConfig() {
   const updatedBlockchain = {};
 
   // Read current input values
+  // for (const def of Object.values(CONTRACT_DEFS)) {
+  //   const inputEl = document.getElementById(`input-${def.addressKey}`);
+  //   if (inputEl) {
+  //     updatedBlockchain[def.addressKey] = inputEl.value.trim();
+  //   }
+  // }
+
+  // In frontend saveConfig():
   for (const def of Object.values(CONTRACT_DEFS)) {
     const inputEl = document.getElementById(`input-${def.addressKey}`);
-    if (inputEl) {
-      updatedBlockchain[def.addressKey] = inputEl.value.trim();
+    const val = inputEl ? inputEl.value.trim() : "";
+    if (val) { // Only attach non-empty input values
+      updatedBlockchain[def.addressKey] = val;
     }
   }
 
@@ -347,6 +416,35 @@ async function runDeployTask(command, saveKey, statusElId) {
     setStatus(statusElId, "error", err.message);
   }
 }
+
+async function deployBatteryManager() {
+  const oracleAddr = config?.blockchain?.oracle_storage_address;
+  if (!isValidAddress(oracleAddr)) {
+    alert("Oracle Storage address is missing or invalid — deploy Oracle Storage first.");
+    return;
+  }
+  const cmd = `python deploy_helper.py BatteryManager ${oracleAddr}`;
+  await runDeployTask(cmd, null, "status-deploy-battery");
+}
+
+async function oracleRegisterHouseholds() {
+  const oracleAddr = config?.blockchain?.oracle_storage_address;
+  const frontendConfigPath = config?.frontend?.config_path;
+  const cmd = `python oracle_register_households.py`;
+  await runDeployTask(cmd, null, "status-oracle-register");
+}
+
+async function deployP2PMarket() {
+  const stablecoinAddr = config?.blockchain?.stablecoin_address;
+  const oracleAddr = config?.blockchain?.oracle_storage_address;
+  if (!isValidAddress(stablecoinAddr) || !isValidAddress(oracleAddr)) {
+    alert("Stablecoin or Oracle address is missing/invalid in the config.");
+    return;
+  }
+  const cmd = `python deploy_helper.py P2PEnergyMarket ${stablecoinAddr} ${oracleAddr}`;
+  await runDeployTask(cmd, null, "status-deploy-p2p");
+}
+
 
   // Automatically load configuration on page load
   window.addEventListener("load", loadConfig);
