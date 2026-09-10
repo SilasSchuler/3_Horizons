@@ -26,7 +26,7 @@ from pathlib import Path
 
 import numpy as np
 from dotenv import load_dotenv
-from sklearn.linear_model import LinearRegression
+from sklearn.ensemble import GradientBoostingRegressor
 from web3 import Web3
 from web3.middleware import ExtraDataToPOAMiddleware
 
@@ -72,34 +72,56 @@ def load_training_data(household_id: str, min_rows: int = 50):
 #  Modell  (HIER ERSETZEN TEAMS)
 # ─────────────────────────────────────────────────────────────────────
 
+def _expand_features(X):
+    """
+    Rohe Features -> erweiterte Features.
+    Eingabe-Spalten: [sim_hour, sim_dayofweek, irradiance, temperature, cloud_cover]
+
+    sim_hour und sim_dayofweek sind zyklisch (23h liegt naeher an 0h als an 12h);
+    lineare/baumbasierte Modelle profitieren von einer sin/cos-Kodierung statt
+    des rohen Zaehlers.
+    """
+    X = np.asarray(X, dtype=float)
+    hour = X[:, 0]
+    dow = X[:, 1]
+    rest = X[:, 2:]
+    cyc = np.column_stack([
+        np.sin(2 * np.pi * hour / 24.0), np.cos(2 * np.pi * hour / 24.0),
+        np.sin(2 * np.pi * dow / 7.0), np.cos(2 * np.pi * dow / 7.0),
+    ])
+    return np.column_stack([cyc, rest])
+
+
 class ForecastModel:
     """
-    Default: einfache lineare Regression.
+    Gradient-Boosted Trees (sklearn) auf zyklisch kodierten Zeit-Features plus
+    Wetter. Robuster als lineare Regression bei nichtlinearem Tagesgang und
+    kleinen Datenmengen, ohne Zusatz-Dependency.
 
-    TODO (Teams): Ersetzt diese Klasse durch ein leistungsfähigeres Modell.
-    Empfehlungen:
-      - sklearn.ensemble.GradientBoostingRegressor (robust, einfach)
-      - xgboost.XGBRegressor (schnell, sehr genau)
-      - prophet (gut für saisonale Muster)
-      - tensorflow/keras LSTM (für Sequenzdaten - aufwendiger)
-
-    Wichtig: Methode predict(X) muss eine Vorhersage zurückgeben.
+    TODO (Teams): Fuer mehr Genauigkeit XGBoost / LightGBM / LSTM einsetzen
+    (siehe requirements.txt). API-Vertrag: train(X, y_c, y_p) und
+    predict(X) -> (cons, prod) muessen erhalten bleiben.
     """
+    _PARAMS = dict(n_estimators=300, max_depth=3, learning_rate=0.05,
+                   subsample=0.9, random_state=42)
+
     def __init__(self):
-        self.model_consumption = LinearRegression()
-        self.model_production = LinearRegression()
+        self.model_consumption = GradientBoostingRegressor(**self._PARAMS)
+        self.model_production = GradientBoostingRegressor(**self._PARAMS)
         self.is_trained = False
 
     def train(self, X, y_consumption, y_production):
-        self.model_consumption.fit(X, y_consumption)
-        self.model_production.fit(X, y_production)
+        Xf = _expand_features(X)
+        self.model_consumption.fit(Xf, y_consumption)
+        self.model_production.fit(Xf, y_production)
         self.is_trained = True
 
     def predict(self, X):
         if not self.is_trained:
             raise RuntimeError("Modell nicht trainiert")
-        cons = self.model_consumption.predict(X)
-        prod = self.model_production.predict(X)
+        Xf = _expand_features(X)
+        cons = self.model_consumption.predict(Xf)
+        prod = self.model_production.predict(Xf)
         return np.maximum(0, cons), np.maximum(0, prod)
 
 
@@ -160,6 +182,12 @@ def main():
     w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
     account = w3.eth.account.from_key(PRIVATE_KEY)
 
+    ic_addr = bc.get("incentive_controller_address", "")
+    submit_enabled = Web3.is_address(ic_addr) and int(ic_addr, 16) != 0
+    if not submit_enabled:
+        print("ℹ IncentiveController-Adresse nicht gesetzt (config.json) - "
+              "Forecasts werden nur berechnet, nicht on-chain eingereicht.\n")
+
     with open(ABI_DIR / "IncentiveController.json") as f:
         ic_abi = json.load(f)["abi"]
     with open(ABI_DIR / "OracleStorage.json") as f:
@@ -218,14 +246,15 @@ def main():
                 prod = prod_pred[0]
                 print(f"  {h_id}: Verbrauch={cons:.0f}Wh, Produktion={prod:.0f}Wh")
 
-                # ─────────────────────────────────────────────────────
-                # TODO (Teams): Aktivieren, wenn IncentiveController deployed ist
-                #
-                # submit_forecast_onchain(
-                #     w3, incentive, account,
-                #     h_cfg["address"], next_slot, cons, prod
-                # )
-                # ─────────────────────────────────────────────────────
+                if submit_enabled:
+                    try:
+                        submit_forecast_onchain(
+                            w3, incentive, account,
+                            h_cfg["address"], next_slot, cons, prod
+                        )
+                        print(f"    ↳ Forecast on-chain (Slot {next_slot})")
+                    except Exception as e:
+                        print(f"    ↳ submitForecast fehlgeschlagen: {e}")
 
             # Nach einem Slot: tatsächliche Werte als "actual" submitten
             time.sleep(60)
@@ -237,14 +266,15 @@ def main():
                 actual_prod = meter[1]
                 print(f"  {h_id}: actual cons={actual_cons}, prod={actual_prod}")
 
-                # ─────────────────────────────────────────────────────
-                # TODO (Teams): Aktivieren, wenn IncentiveController deployed ist
-                #
-                # submit_actual_onchain(
-                #     w3, incentive, account,
-                #     h_cfg["address"], current_slot, actual_cons, actual_prod
-                # )
-                # ─────────────────────────────────────────────────────
+                if submit_enabled:
+                    try:
+                        submit_actual_onchain(
+                            w3, incentive, account,
+                            h_cfg["address"], current_slot, actual_cons, actual_prod
+                        )
+                        print(f"    ↳ Actual on-chain -> Score-Update (Slot {current_slot})")
+                    except Exception as e:
+                        print(f"    ↳ submitActual fehlgeschlagen: {e}")
 
         except Exception as e:
             print(f"  Fehler: {e}")
