@@ -35,6 +35,7 @@ Voraussetzung:
 
 import json
 import os
+
 import sys
 import time
 from pathlib import Path
@@ -175,7 +176,6 @@ class OracleWriter:
         """Hauptschleife: pushe einen Slot pro Minute."""
         print("\n=== Oracle Writer gestartet ===\n")
         self.register_households_if_needed()
-        self.register_p2p_if_needed()
         try:
             while True:
                 start = time.time()

@@ -23,12 +23,15 @@
   max-width: 100%;
   height: auto;
   display: block;
+  }
 
-  .status-icon { font-size: 1.1rem; margin-left: 0.5rem; font-weight: bold; }
+.status-icon { font-size: 1.1rem; margin-left: 0.5rem; font-weight: bold; }
 .status-success { color: #0a7d2c; }
 .status-error { color: #d32f2f; }
 .status-loading { color: #e65100; font-style: italic; }
-}
+
+.script-log { white-space: pre-wrap; font-family: monospace; font-size: 0.8rem; background: #f5f5f5; padding: 0.5rem; max-height: 12rem; overflow-y: auto; border-radius: 4px; }
+
 </style>
 </head>
 <body>
@@ -94,11 +97,35 @@
       <span id="status-approve-households" class="status-icon"></span>
     </div>
   </div>
-
-
 </section>
 
+<section>
+  <h2>Continuous Scripts</h2>
 
+  <div class="action-card">
+    <div class="row">
+      <strong>Oracle Writer</strong>
+      <span id="status-oracle_writer-state" class="status-off">● stopped</span>
+    </div>
+    <div class="row">
+      <button id="btn-oracle_writer-start" onclick="startScript('oracle_writer')">Start</button>
+      <button id="btn-oracle_writer-stop" onclick="stopScript('oracle_writer')" disabled>Stop</button>
+    </div>
+    <pre id="log-oracle_writer" class="script-log">(no output yet)</pre>
+  </div>
+
+  <div class="action-card">
+    <div class="row">
+      <strong>Settlement Trigger</strong>
+      <span id="status-settlement_trigger-state" class="status-off">● stopped</span>
+    </div>
+    <div class="row">
+      <button id="btn-settlement_trigger-start" onclick="startScript('settlement_trigger')">Start</button>
+      <button id="btn-settlement_trigger-stop" onclick="stopScript('settlement_trigger')" disabled>Stop</button>
+    </div>
+    <pre id="log-settlement_trigger" class="script-log">(no output yet)</pre>
+  </div>
+</section>
 
 <section>
   <h2>Wallet</h2>
@@ -140,6 +167,7 @@
   let contracts = {};       // key -> { instance, address }
 
   const MAX_UINT256 = "115792089237316195423570985008687907853269984665640564039457584007913129639935";
+  const SCRIPT_NAMES = ["oracle_writer", "settlement_trigger"];
 
   // key -> { abiFile, addressKey, label }
 const CONTRACT_DEFS = {
@@ -150,7 +178,94 @@ const CONTRACT_DEFS = {
   stablecoin: { abiFile: "EnergyStablecoin.json",addressKey: "stablecoin_address",    label: "Stablecoin" },
 };
   
+async function startScript(name) {
+  try {
+    const res = await fetch(`/api/scripts/${name}/start`, { method: "POST" });
+    const data = await res.json();
+    if (!res.ok) {
+      alert(`Failed to start ${name}: ${data.error}`);
+      return;
+    }
+    updateScriptUI(name, true);
+  } catch (err) {
+    console.error(`startScript(${name}) failed:`, err);
+  }
+}
 
+async function stopScript(name) {
+  try {
+    const res = await fetch(`/api/scripts/${name}/stop`, { method: "POST" });
+    const data = await res.json();
+    if (!res.ok) {
+      alert(`Failed to stop ${name}: ${data.error}`);
+      return;
+    }
+    updateScriptUI(name, false);
+  } catch (err) {
+    console.error(`stopScript(${name}) failed:`, err);
+  }
+}
+
+function updateScriptUI(name, running) {
+  const stateEl = document.getElementById(`status-${name}-state`);
+  const startBtn = document.getElementById(`btn-${name}-start`);
+  const stopBtn = document.getElementById(`btn-${name}-stop`);
+  if (stateEl) {
+    stateEl.textContent = running ? "● running" : "● stopped";
+    stateEl.className = running ? "status-ok" : "status-off";
+  }
+  if (startBtn) startBtn.disabled = running;
+  if (stopBtn) stopBtn.disabled = !running;
+}
+
+// async function pollScriptLogs() {
+//   for (const name of SCRIPT_NAMES) {
+//     try {
+//       const res = await fetch(`/api/scripts/${name}/logs`);
+//       if (!res.ok) continue;
+//       const data = await res.json();
+
+//       const logEl = document.getElementById(`log-${name}`);
+//       if (logEl) {
+//         const atBottom = logEl.scrollTop + logEl.clientHeight >= logEl.scrollHeight - 5;
+//         logEl.textContent = data.stdout || "(no output yet)";
+//         if (atBottom) logEl.scrollTop = logEl.scrollHeight;
+//       }
+//       updateScriptUI(name, data.running);
+//     } catch (err) {
+//       console.error(`pollScriptLogs(${name}) failed:`, err);
+//     }
+//   }
+// }
+
+async function pollScriptLogs() {
+  for (const name of SCRIPT_NAMES) {
+    try {
+      const res = await fetch(`/api/scripts/${name}/logs`);
+      if (!res.ok) continue;
+      const data = await res.json();
+
+      console.log(`[poll] ${name}:`, data);   // <-- add this
+
+      const logEl = document.getElementById(`log-${name}`);
+      console.log(`[poll] ${name} element found:`, !!logEl);   // <-- and this
+
+      if (logEl) {
+        const atBottom = logEl.scrollTop + logEl.clientHeight >= logEl.scrollHeight - 5;
+        logEl.textContent = data.stdout || "(no output yet)";
+        if (atBottom) logEl.scrollTop = logEl.scrollHeight;
+      }
+      updateScriptUI(name, data.running);
+    } catch (err) {
+      console.error(`pollScriptLogs(${name}) failed:`, err);
+    }
+  }
+}
+
+window.addEventListener("load", () => {
+  pollScriptLogs();
+  setInterval(pollScriptLogs, 2000);   // poll every 2s — well under your 60s slot duration
+});
 
   function isValidAddress(addr) {
     return typeof addr === "string" && /^0x[a-fA-F0-9]{40}$/.test(addr);

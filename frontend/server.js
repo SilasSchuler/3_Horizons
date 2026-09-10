@@ -145,11 +145,6 @@ app.post("/api/run-task", (req, res) => {
   });
 });
 
-
-
-
-
-
 app.get("/api/scripts/status", (req, res) => {
   const status = {};
   for (const name of Object.keys(SCRIPTS)) {
@@ -173,12 +168,20 @@ app.post("/api/scripts/:name/start", (req, res) => {
     return res.status(404).json({ error: `${scriptFile} not found in ${PYTHON_DIR}` });
   }
 
-  const outLog = fs.createWriteStream(path.join(LOG_DIR, `${name}.stdout.log`), { flags: "a" });
-  const errLog = fs.createWriteStream(path.join(LOG_DIR, `${name}.stderr.log`), { flags: "a" });
+  // Logs für diesen Durchlauf überschreiben (statt anhängen)
+  const outLog = fs.createWriteStream(path.join(LOG_DIR, `${name}.stdout.log`), { flags: "w" });
+  const errLog = fs.createWriteStream(path.join(LOG_DIR, `${name}.stderr.log`), { flags: "w" });
 
   // "python" vs "python3": adjust if your setup needs a specific interpreter
   // (e.g. a venv's python.exe) — could also come from an env var per script.
-  const child = spawn("python", [scriptFile], { cwd: PYTHON_DIR });
+  // const child = spawn("python", [scriptFile], { cwd: PYTHON_DIR });
+  
+ // Ensure stdout is line-buffered for real-time logging in the console. Used by Frontend for live updates.
+  const child = spawn("python", ["-u", scriptFile], { cwd: PYTHON_DIR });
+
+  // child.stderr.on("data", (chunk) => {
+  //   console.error(`[${name}] STDERR: ${chunk.toString().trim()}`);
+  // });
 
   child.stdout.pipe(outLog);
   child.stderr.pipe(errLog);
@@ -220,6 +223,25 @@ app.post("/api/scripts/:name/stop", (req, res) => {
   });
 });
 
+app.get("/api/scripts/:name/logs", (req, res) => {
+  const { name } = req.params;
+  if (!SCRIPTS[name]) {
+    return res.status(400).json({ error: `Unknown script "${name}"` });
+  }
+
+  const tail = (filePath, maxLines = 200) => {
+    if (!fs.existsSync(filePath)) return "";
+    const lines = fs.readFileSync(filePath, "utf-8").split("\n");
+    return lines.slice(-maxLines).join("\n");
+  };
+
+  res.json({
+    running: runningProcesses.has(name),
+    stdout: tail(path.join(LOG_DIR, `${name}.stdout.log`)),
+    stderr: tail(path.join(LOG_DIR, `${name}.stderr.log`)),
+  });
+});
+
 // ─────────────────────────────────────────────────────────────
 //  Static dashboard
 // ─────────────────────────────────────────────────────────────
@@ -236,5 +258,6 @@ process.on("SIGINT", () => {
     console.log(`Stopping ${name} (pid=${child.pid})...`);
     treeKill(child.pid, "SIGTERM");
   }
+
   process.exit(0);
 });
