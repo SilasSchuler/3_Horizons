@@ -64,24 +64,44 @@ def lies_protokoll():
     text = dateien[-1].read_text(encoding="utf-8", errors="replace")
     runden, aktuell = [], None
 
+    def abschliessen():
+        nonlocal aktuell
+        if aktuell:
+            runden.append(aktuell)
+            aktuell = None
+
     for zeile in text.splitlines():
         z = zeile.strip()
         if not z:
             continue
+
+        # Eine Zyklusgrenze beendet die laufende Runde. Ohne das wuerde
+        # eine Notladung aus dem naechsten Zyklus faelschlich der vorigen
+        # Verhandlungsrunde zugeschlagen.
         if z.startswith("### Zyklus"):
+            abschliessen()
             continue
+
         if " bietet " in z and " Uhr zu " in z:
-            if aktuell:
-                runden.append(aktuell)
-            aktuell = {"angebot": z, "antworten": [], "zuschlag": None}
-        elif aktuell is not None:
+            abschliessen()
+            aktuell = {"angebot": z, "antworten": [], "zuschlag": None,
+                       "art": "angebot"}
+            continue
+
+        # Notladung ohne vorangehendes Angebot: eigener Eintrag, denn hier
+        # gab es keine Verhandlung, sondern eine Zwangsentscheidung.
+        if aktuell is None and "laedt" in z and "vollen Preis" in z:
+            aktuell = {"angebot": None, "antworten": [z], "zuschlag": None,
+                       "art": "notladung"}
+            continue
+
+        if aktuell is not None:
             if z.startswith("->"):
                 aktuell["zuschlag"] = z[2:].strip()
             else:
                 aktuell["antworten"].append(z)
 
-    if aktuell:
-        runden.append(aktuell)
+    abschliessen()
     return runden
 
 
@@ -193,53 +213,69 @@ def lies_kalender(config):
 # ─────────────────────────────────────────────────────────────────────
 
 def score_diagramm(verlauf, breite=880, hoehe=300):
-    """Zeichnet den Score-Verlauf als SVG - ohne externe Bibliothek."""
+    """
+    Zeichnet den Score-Verlauf als SVG - ohne externe Bibliothek.
+
+    Die X-Achse ist die Blocknummer, nicht der Messpunkt-Index. Das ist
+    wichtig, weil die Haushalte unterschiedlich viele Messpunkte haben:
+    Schlaegt eine Transaktion fehl, fehlt fuer diesen Haushalt ein Wert.
+    Wuerde jede Kurve ueber ihren eigenen Index normiert, laegen Punkte
+    uebereinander, die zeitlich weit auseinander liegen - der Vergleich
+    waere wertlos.
+    """
     if not verlauf:
         return "<p class='hinweis'>Noch keine Score-Daten vorhanden.</p>"
+
+    punkte_gesamt = [p for reihe in verlauf.values() for p in reihe]
+    if len(punkte_gesamt) < 2:
+        return "<p class='hinweis'>Zu wenige Messpunkte fuer eine Kurve.</p>"
+
+    block_min = min(p[0] for p in punkte_gesamt)
+    block_max = max(p[0] for p in punkte_gesamt)
+    if block_max == block_min:
+        return "<p class='hinweis'>Alle Messpunkte im selben Block.</p>"
 
     rand_l, rand_r, rand_o, rand_u = 50, 20, 20, 40
     pb = breite - rand_l - rand_r
     ph = hoehe - rand_o - rand_u
 
-    laengste = max(len(v) for v in verlauf.values())
-    if laengste < 2:
-        return "<p class='hinweis'>Zu wenige Messpunkte fuer eine Kurve.</p>"
+    def x_von(block):
+        return rand_l + (block - block_min) / (block_max - block_min) * pb
+
+    def y_von(score):
+        return rand_o + ph - (score / 1000) * ph
 
     teile = [f'<svg viewBox="0 0 {breite} {hoehe}" class="chart">']
 
-    # Gitter und Y-Achse
     for wert in (0, 250, 500, 750, 1000):
-        y = rand_o + ph - (wert / 1000) * ph
+        y = y_von(wert)
         teile.append(f'<line x1="{rand_l}" y1="{y:.0f}" x2="{breite-rand_r}" '
                      f'y2="{y:.0f}" class="grid"/>')
         teile.append(f'<text x="{rand_l-8}" y="{y+4:.0f}" class="tick" '
                      f'text-anchor="end">{wert}</text>')
 
-    # Neutrallinie hervorheben
-    y500 = rand_o + ph - 0.5 * ph
+    y500 = y_von(500)
     teile.append(f'<line x1="{rand_l}" y1="{y500:.0f}" x2="{breite-rand_r}" '
                  f'y2="{y500:.0f}" class="neutral"/>')
     teile.append(f'<text x="{breite-rand_r-4}" y="{y500-6:.0f}" class="tick" '
                  f'text-anchor="end">neutral</text>')
 
-    for name, punkte in sorted(verlauf.items()):
-        if len(punkte) < 2:
+    for name, reihe in sorted(verlauf.items()):
+        if len(reihe) < 2:
             continue
         farbe = FARBEN.get(name, "#666")
-        n = len(punkte)
-        koords = []
-        for i, (_, score, _) in enumerate(punkte):
-            x = rand_l + (i / (n - 1)) * pb
-            y = rand_o + ph - (score / 1000) * ph
-            koords.append(f"{x:.1f},{y:.1f}")
+        # Nach Block sortieren: die Events kommen blockweise, aber nicht
+        # zwingend in aufsteigender Reihenfolge zurueck.
+        sortiert = sorted(reihe, key=lambda p: p[0])
+        koords = [f"{x_von(b):.1f},{y_von(score):.1f}"
+                  for b, score, _ in sortiert]
         teile.append(f'<polyline points="{" ".join(koords)}" fill="none" '
                      f'stroke="{farbe}" stroke-width="2.5"/>')
-        # Endpunkt markieren
         lx, ly = koords[-1].split(",")
         teile.append(f'<circle cx="{lx}" cy="{ly}" r="4" fill="{farbe}"/>')
 
     teile.append(f'<text x="{breite/2:.0f}" y="{hoehe-8}" class="tick" '
-                 f'text-anchor="middle">Abrechnungsslots im Zeitverlauf</text>')
+                 f'text-anchor="middle">Zeitverlauf (Blocknummer)</text>')
     teile.append("</svg>")
     return "".join(teile)
 
@@ -255,8 +291,14 @@ def baue_html(runden, verlauf, stand, kalender, config, kal_tag=None):
     # Nur die Runden zeigen, in denen tatsaechlich etwas zustande kam.
     # Reihenweise Absagen sind fuer die Praesentation uninteressant - sie
     # entstehen, wenn der Ueberschuss zu klein fuer jedes Geraet ist.
-    interessant = [r for r in runden if r["zuschlag"]
-                   and "niemand" not in r["zuschlag"].lower()]
+    def zeigenswert(r):
+        # Eine Notladung ist immer erwaehnenswert: Sie zeigt, was passiert,
+        # wenn niemand etwas anbietet und die Frist trotzdem laeuft.
+        if r.get("art") == "notladung":
+            return True
+        return bool(r["zuschlag"]) and "niemand" not in r["zuschlag"].lower()
+
+    interessant = [r for r in runden if zeigenswert(r)]
     if len(interessant) < 2:
         # Nichts zustande gekommen: dann wenigstens ein paar Runden zeigen,
         # damit der Abschnitt nicht leer bleibt.
@@ -264,7 +306,8 @@ def baue_html(runden, verlauf, stand, kalender, config, kal_tag=None):
 
     dialog = []
     for r in interessant[-6:]:
-        m = re.match(r"(\S+) bietet (\d+) Wh um ([\d.]+) Uhr zu ([\d.]+)", r["angebot"])
+        m = (re.match(r"(\S+) bietet (\d+) Wh um ([\d.]+) Uhr zu ([\d.]+)",
+                      r["angebot"]) if r["angebot"] else None)
         if m:
             wer, menge, stunde, preis = m.groups()
             farbe = FARBEN.get(wer, "#666")
@@ -275,6 +318,9 @@ def baue_html(runden, verlauf, stand, kalender, config, kal_tag=None):
                 f'<span class="text">Ich habe <b>{menge} Wh</b> uebrig um '
                 f'{float(stunde):g} Uhr. Ich gebe sie fuer {preis} CHFD/kWh ab '
                 f'statt der ueblichen 0.100.</span></div>')
+        elif r.get("art") == "notladung":
+            # Kein Angebot - der Agent handelt aus eigenem Antrieb.
+            dialog.append('<div class="runde ohne-angebot">')
         else:
             dialog.append(f'<div class="runde"><div class="angebot">'
                           f'{r["angebot"]}</div>')
@@ -345,9 +391,26 @@ def baue_html(runden, verlauf, stand, kalender, config, kal_tag=None):
             zustand = "Homeoffice"
             wirkung = "volle Flexibilitaet den ganzen Tag"
         elif k["weg"]:
-            rueck = max(k["weg"]) + 1
-            zustand = f"ausser Haus {min(k['weg'])}-{max(k['weg'])+1} Uhr"
-            wirkung = f"Geraete erst ab {rueck} Uhr startbar"
+            # Zusammenhaengende Bloecke bilden, statt nur erste bis letzte
+            # Stunde zu nehmen - sonst verschwinden Luecken zwischen zwei
+            # Terminen, in denen jemand durchaus zuhause ist.
+            stunden = sorted(k["weg"])
+            bloecke, start, vorher = [], stunden[0], stunden[0]
+            for h in stunden[1:]:
+                if h == vorher + 1:
+                    vorher = h
+                else:
+                    bloecke.append((start, vorher + 1))
+                    start, vorher = h, h
+            bloecke.append((start, vorher + 1))
+
+            zustand = "ausser Haus " + ", ".join(
+                f"{v}-{b} Uhr" for v, b in bloecke)
+            frei = 24 - len(stunden)
+            if len(bloecke) == 1:
+                wirkung = f"Geraete erst ab {bloecke[0][1]} Uhr startbar"
+            else:
+                wirkung = f"{len(bloecke)} Zeitfenster, {frei} h zuhause"
         else:
             zustand = "keine Termine"
             wirkung = "Standardfenster"
@@ -388,7 +451,7 @@ def baue_html(runden, verlauf, stand, kalender, config, kal_tag=None):
 <html lang="de">
 <head>
 <meta charset="utf-8">
-<title>Energy Trading Challenge - Phase 3</title>
+<title>Energiegemeinschaft mit verhandelnden Agenten</title>
 <style>
   * {{ box-sizing: border-box; }}
   body {{ font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
@@ -415,6 +478,7 @@ def baue_html(runden, verlauf, stand, kalender, config, kal_tag=None):
   .antwort.frist {{ background: #fffbeb; border-left: 3px solid #f59e0b; }}
   .antwort.notladung {{ background: #fff7ed; border-left: 3px solid #ea580c;
                         color: #7c2d12; }}
+  .runde.ohne-angebot {{ border-left-color: #fdba74; }}
   .keiner {{ color: #888; font-size: 13px; margin: 6px 0 0 28px;
              font-style: italic; }}
   .wer {{ font-weight: 600; display: block; font-size: 13px;
@@ -454,7 +518,7 @@ def baue_html(runden, verlauf, stand, kalender, config, kal_tag=None):
 <div class="seite">
 
   <h1>Energiegemeinschaft mit verhandelnden Agenten</h1>
-  <div class="unter">Team 3_Horizons &middot; Phase 3 &middot; Sepolia Testnet</div>
+  <div class="unter">Team 3_Horizons &middot; Sepolia Testnet</div>
 
   <h2>Die Agenten verhandeln</h2>
   <div class="erklaerung">

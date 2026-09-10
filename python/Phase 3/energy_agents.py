@@ -203,7 +203,6 @@ class HouseholdAgent:
         if dringende:
             beste = max(dringende, key=lambda l: l.energie_wh)
             rest = beste.stunden_bis_frist(angebot.stunde)
-            ersparnis = (self.markt_preis - angebot.preis_pro_kwh) * beste.energie_wh / 1000
             return Zusage(
                 kaeufer=self.id,
                 last_name=beste.name,
