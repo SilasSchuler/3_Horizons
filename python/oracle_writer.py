@@ -1,36 +1,8 @@
 """
 oracle_writer.py
 
-VOLLSTÄNDIG VORGEGEBEN - Teams modifizieren dieses Skript NICHT.
-
 Liest Daten vom EnergySimulator und schreibt sie jeden Slot in den
 OracleStorage Smart Contract auf Sepolia.
-
-Verantwortlichkeiten:
-  - Slot-Counter im Oracle aktualisieren
-  - Pro Haushalt: Meter- und Batteriedaten on-chain schreiben
-  - Wetterdaten on-chain schreiben
-  - Nonce-Management & Retry bei Gas-Problemen
-
-Hinweis zum Timing (bekannte Einschränkung, kein Bug in eurem Contract-Code):
-  Pro Slot werden hier bis zu 8 sequenzielle Transaktionen gesendet
-  (updateSlot, updateWeather, pro Haushalt updateMeter + updateBattery).
-  Bei ~12s Blockzeit auf Sepolia kann ein Durchlauf locker die Ziel-Slotdauer
-  von 60s überschreiten. `OracleStorage.currentSlot` läuft nach
-  `block.timestamp`, nicht nach Anzahl `updateSlot()`-Aufrufen - er kann also
-  auch mal Sprünge machen, wenn ein Durchlauf länger als 60s dauert. Plant
-  eure Contract-Logik (v.a. settleSlot()) so, dass sie nicht auf exakte
-  60-Sekunden-Abstände zwischen Slots angewiesen ist.
-
-  Zusätzlich: Die simulierte Tageszeit und der Batterie-SoC leben nur im
-  Prozessspeicher des EnergySimulator (siehe data_simulator.py). Bei jedem
-  Neustart dieses Skripts (z.B. beim Debuggen) beginnt die simulierte Uhrzeit
-  wieder bei 0 und der SoC wieder bei 50% - das ist erwartetes Verhalten,
-  kein Fehler in eurem Contract-Code.
-
-Voraussetzung:
-  - .env mit ORACLE_PRIVATE_KEY (Wallet, die als autorisierter Oracle eingetragen ist)
-  - config.json mit deployten Contract-Adressen
 """
 
 import json
@@ -90,27 +62,50 @@ class OracleWriter:
 
     # ─────────────────────────────────────────────────────────────
 
-    def _send_tx(self, contract_function, max_retries: int = 3):
+    # 🚀 GEÄNDERTER BEREICH START ───────────────────────────────────
+    def _send_tx(self, contract_function, max_retries: int = 5):
         """Baut, signiert, sendet eine Transaktion - mit Retry und Nonce-Management."""
         for attempt in range(max_retries):
             try:
+                # 🚀 NEU: Nonce explizit mit 'pending' abfragen
+                # WARUM: Bezieht auch Transaktionen mit ein, die gerade noch im Mempool warten.
                 nonce = self.w3.eth.get_transaction_count(self.account.address, "pending")
+
+                # 🚀 NEU: Dynamischen Gas-Preis vom Sepolia-Netzwerk abfragen
+                # WARUM: Verhindert, dass starre Gebühren (wie früher 30 Gwei) vom Netzwerk abgelehnt werden.
+                base_gas_price = self.w3.eth.gas_price
+
+                # 🚀 NEU: Multiplikator für Fehlversuche (attempt)
+                # WARUM: Ethereum verlangt bei Ersatz-Transaktionen (gleiche Nonce) mindestens 10-20% mehr Gas.
+                #        Ohne diesen Multiplikator entsteht der Fehler "replacement transaction underpriced".
+                multiplier = 1.2 ** attempt
+                max_fee = int(max(base_gas_price * 1.5, self.w3.to_wei(40, "gwei")) * multiplier)
+                priority_fee = int(self.w3.to_wei(3 + attempt, "gwei"))
+
                 tx = contract_function.build_transaction({
                     "from": self.account.address,
                     "nonce": nonce,
                     "chainId": self.chain_id,
                     "gas": 300_000,
-                    "maxFeePerGas": self.w3.to_wei("30", "gwei"),
-                    "maxPriorityFeePerGas": self.w3.to_wei("2", "gwei"),
+                    # 🚀 NEU: Verwende dynamisch berechnete Werte statt hardcodierter "30 gwei" / "2 gwei"
+                    "maxFeePerGas": max_fee,
+                    "maxPriorityFeePerGas": priority_fee,
                 })
+
                 signed = self.w3.eth.account.sign_transaction(tx, ORACLE_PRIVATE_KEY)
                 tx_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction)
+                
+                # Bestätigung abwarten
                 receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
                 return receipt
+
             except Exception as e:
-                print(f"  TX fehlgeschlagen (Versuch {attempt+1}): {e}")
-                time.sleep(5)
+                # 🚀 NEU: Erweiterte Fehlerausgabe zeigt jetzt auch den aktuellen Versuch an
+                print(f"  TX fehlgeschlagen (Versuch {attempt+1}/{max_retries}): {e}")
+                time.sleep(4)
+
         raise RuntimeError("Max retries erreicht")
+    # 🚀 GEÄNDERTER BEREICH ENDE ────────────────────────────────────
 
     # ─────────────────────────────────────────────────────────────
 

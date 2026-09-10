@@ -9,7 +9,7 @@
   "households": [
     {
       "id": "house_01",
-      "address": "0xREPLACE_WITH_TEAM_WALLET_1",
+      "address": "0x2C4b47689a05f0653637a97a8Db762b764f1653c",
       "type": "producer_consumer",
       "pv_peak_kwp": 8.0,
       "battery_capacity_kwh": 10.0,
@@ -18,7 +18,7 @@
     },
     {
       "id": "house_02",
-      "address": "0xREPLACE_WITH_TEAM_WALLET_2",
+      "address": "0xF49153d700AD86CA224f7B2064F541278FE1c320",
       "type": "producer_consumer",
       "pv_peak_kwp": 5.0,
       "battery_capacity_kwh": 7.5,
@@ -27,7 +27,7 @@
     },
     {
       "id": "house_03",
-      "address": "0xREPLACE_WITH_TEAM_WALLET_3",
+      "address": "0xc4294cdd83191cCfeb805Da2f1A6fEd0416E8A64",
       "type": "consumer_only",
       "pv_peak_kwp": 0.0,
       "battery_capacity_kwh": 0.0,
@@ -43,8 +43,8 @@
     "cloud_cover_pattern": "sinusoidal_with_noise"
   },
 
-  "blockchain": {
-    "rpc_url": "https://rpc.sepolia.org",
+"blockchain": {
+    "rpc_url": "https://ethereum-sepolia-rpc.publicnode.com",
     "chain_id": 11155111,
     "oracle_storage_address": "0x61769c1C299495194D7Df49030019e613d13a88D",
     "p2p_market_address": "0xdD29CbA9F18086BB9EC5C7AA4B70F7631B4AA5Fc",
