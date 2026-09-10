@@ -48,7 +48,7 @@
     "chain_id": 11155111,
     "oracle_storage_address": "0x61769c1C299495194D7Df49030019e613d13a88D",
     "p2p_market_address": "0xdD29CbA9F18086BB9EC5C7AA4B70F7631B4AA5Fc",
-    "battery_manager_address": "0x8C71b36c6b2a4C61ADAe5394f81be064F3769C01",
+    "battery_manager_address": "0x2d074bC0c484b5012ceA2D2d1378297BF18802eb",
     "incentive_controller_address": "0xREPLACE_AFTER_DEPLOY",
     "stablecoin_address": "0x4BaBBaE33998fEd65Ada53bc41CeAa3Cde7F7B46"
   }

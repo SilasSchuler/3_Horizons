@@ -52,6 +52,9 @@ CHUNK = 800
 # zwischen zwei Simulationslaeufen und trennt die Abschnitte.
 LUECKE = 25
 
+# Ein Slot = 1 reale Minute = 15 Simulationsminuten
+SIM_H_PRO_SLOT = 0.25
+
 ACTION_NAMES = {0: "IDLE", 1: "CHARGE", 2: "DISCHARGE"}
 COLORS = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd"]
 
@@ -92,6 +95,46 @@ def letzter_abschnitt(slots):
             break
         start = s[i - 1]
     return start, ende
+
+
+def sim_stunden_achse(ax, lo, hi, peak_slot):
+    """
+    Beschriftet die X-Achse mit Simulationsstunden statt Slot-Nummern.
+
+    Ein Slot ist eine reale Minute und entspricht 15 Simulationsminuten,
+    also 0.25 Simulationsstunden. Als Anker dient der Slot mit der
+    hoechsten Gesamtproduktion - das ist der Sonnenhoechststand und damit
+    etwa 12 Uhr Simulationszeit.
+
+    Die Beschriftung zeigt die Tageszeit, senkrechte Linien markieren
+    Mitternacht. Damit ist auf einen Blick erkennbar, dass die Speicher
+    morgens laden und abends entladen.
+    """
+    def slot_zu_h(slot):
+        return (slot - peak_slot) * SIM_H_PRO_SLOT + 12.0
+
+    h_lo, h_hi = slot_zu_h(lo), slot_zu_h(hi)
+
+    # Ticks alle 6 Simulationsstunden
+    erster = (int(h_lo) // 6) * 6
+    ticks, labels = [], []
+    h = erster
+    while h <= h_hi + 6:
+        if h_lo <= h <= h_hi:
+            ticks.append(peak_slot + (h - 12.0) / SIM_H_PRO_SLOT)
+            labels.append(f"{int(h) % 24:02d}:00")
+        h += 6
+    if ticks:
+        ax.set_xticks(ticks)
+        ax.set_xticklabels(labels)
+
+    # Mitternacht markieren
+    h = (int(h_lo) // 24) * 24
+    while h <= h_hi + 24:
+        if h_lo <= h <= h_hi:
+            ax.axvline(peak_slot + (h - 12.0) / SIM_H_PRO_SLOT,
+                       color="grey", linestyle="--", linewidth=0.7, alpha=0.6)
+        h += 24
 
 
 def main():
@@ -207,6 +250,14 @@ def main():
     gesamt = sum(w for _, w in traded)
     print(f"  Gehandelt: {gesamt} Wh ueber {len(traded)} Slots")
 
+    # Anker fuer die Zeitachse: Slot mit der hoechsten Gesamtproduktion
+    prod_pro_slot = defaultdict(int)
+    for punkte in meter.values():
+        for slot, netto in punkte:
+            if netto > 0:
+                prod_pro_slot[slot] += netto
+    peak_slot = max(prod_pro_slot, key=prod_pro_slot.get) if prod_pro_slot else lo
+
     # ── Plot ──────────────────────────────────────────────────────
     fig, (ax1, ax2, ax3) = plt.subplots(
         3, 1, figsize=(13, 9), sharex=True,
@@ -271,9 +322,12 @@ def main():
         ax3.set_ylim(0, 1)
         ax3.set_yticks([])
     ax3.set_ylabel("Gehandelt (Wh)")
-    ax3.set_xlabel("Slot")
+    ax3.set_xlabel("Simulationszeit (gestrichelt = Mitternacht)")
     ax3.set_title("Im Markt gehandelte Energie pro Slot")
     ax3.grid(alpha=0.3, axis="y")
+
+    for ax in (ax1, ax2, ax3):
+        sim_stunden_achse(ax, lo, hi, peak_slot)
 
     fig.tight_layout()
 
