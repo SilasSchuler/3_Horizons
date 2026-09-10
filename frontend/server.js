@@ -22,9 +22,9 @@ const express = require("express");
 const treeKill = require("tree-kill");
 require("dotenv").config();
 
-const PORT = process.env.PORT || 3000;
-const PYTHON_DIR = path.resolve(__dirname, process.env.PYTHON_DIR || "../python");
-const CONFIG_PATH = path.join(PYTHON_DIR, "node.json");
+const PORT = process.env.PORT || 5500;
+const PYTHON_DIR = path.resolve(__dirname, "../python");
+const CONFIG_PATH = path.join(PYTHON_DIR, "config.json");
 const ABI_DIR = path.join(PYTHON_DIR, "abi");
 const LOG_DIR = path.join(PYTHON_DIR, "logs");
 
@@ -41,25 +41,44 @@ const SCRIPTS = {
 const runningProcesses = new Map();
 
 const app = express();
-app.use(express.json());
+app.use(express.static(__dirname));
 
 // ─────────────────────────────────────────────────────────────
 //  Config + ABIs
 // ─────────────────────────────────────────────────────────────
 
+// app.get("/api/config", (req, res) => {
+//   try {
+//     const config = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8"));
+//     res.json({
+//       blockchain: config.blockchain,
+//       households: config.households.map((h) => ({
+//         id: h.id,
+//         name: h.name,
+//         address: h.address,
+//       })),
+//     });
+//   } catch (err) {
+//     console.error("Failed to read config.json:", err);
+//     res.status(500).json({ error: "Could not read config.json", detail: err.message });
+//   }
+// });
+
 app.get("/api/config", (req, res) => {
   try {
+    if (!fs.existsSync(CONFIG_PATH)) {
+      return res.status(404).json({ error: `config.json not found at ${CONFIG_PATH}` });
+    }
     const config = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8"));
     res.json({
-      blockchain: config.blockchain,
-      households: config.households.map((h) => ({
+      blockchain: config.blockchain || {},
+      households: (config.households || []).map((h) => ({
         id: h.id,
         name: h.name,
         address: h.address,
       })),
     });
   } catch (err) {
-    console.error("Failed to read config.json:", err);
     res.status(500).json({ error: "Could not read config.json", detail: err.message });
   }
 });
@@ -70,13 +89,13 @@ app.use("/abi", express.static(ABI_DIR));
 //  Script control
 // ─────────────────────────────────────────────────────────────
 
-// app.get("/api/scripts/status", (req, res) => {
-//   const status = {};
-//   for (const name of Object.keys(SCRIPTS)) {
-//     status[name] = runningProcesses.has(name);
-//   }
-//   res.json(status);
-// });
+app.get("/api/scripts/status", (req, res) => {
+  const status = {};
+  for (const name of Object.keys(SCRIPTS)) {
+    status[name] = runningProcesses.has(name);
+  }
+  res.json(status);
+});
 
 app.post("/api/scripts/:name/start", (req, res) => {
   const { name } = req.params;
@@ -143,8 +162,6 @@ app.post("/api/scripts/:name/stop", (req, res) => {
 // ─────────────────────────────────────────────────────────────
 //  Static dashboard
 // ─────────────────────────────────────────────────────────────
-
-app.use(express.static(path.join(__dirname, "public")));
 
 app.listen(PORT, () => {
   console.log(`Dashboard running at http://localhost:${PORT}`);

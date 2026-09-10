@@ -17,6 +17,13 @@
   .status-off { color: #999; }
   .status-missing { color: #b00; }
   #log { white-space: pre-wrap; font-family: monospace; font-size: 0.8rem; background: #f5f5f5; padding: 0.5rem; max-height: 12rem; overflow-y: auto; }
+
+  /* CSS for responsive images */
+.responsive-img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
 </style>
 </head>
 <body>
@@ -32,13 +39,21 @@
 </section>
 
 <section>
-  <h2>Contracts</h2>
+  <h2>Configuration</h2>
   <div id="contractList"></div>
 </section>
 
 <section>
   <h2>Households (reference)</h2>
   <div id="householdList"></div>
+  <p>List of registered households on the P2P energy market.</p>
+</section>
+
+<section>
+  <h2>Battery Plot</h2>
+  <div id="batteryPlot"></div>
+  <p>Visualization of battery states for the registered households on the P2P energy market.</p>
+  <img src="plots/battery_soc.png" alt="Battery Plot" class="responsive-img">
 </section>
 
 <section>
@@ -63,7 +78,7 @@
   </div>
 </section>
 
-<!-- <section>
+<section>
   <h2>Background scripts</h2>
   <div class="row">
     <strong>oracle_writer.py</strong>
@@ -77,249 +92,174 @@
     <button onclick="startScript('settlement_trigger')">Start</button>
     <button onclick="stopScript('settlement_trigger')">Stop</button>
   </div>
-</section> -->
-
-<section>
-  <h2>Log</h2>
-  <div id="log"></div>
 </section>
 
 <script>
-let web3;
-let userAccount;
-let config;               // from /api/config
-let contracts = {};       // key -> { instance, address }
 
-const MAX_UINT256 = "115792089237316195423570985008687907853269984665640564039457584007913129639935";
+  let web3;
+  let userAccount;
+  let config;               // from /api/config
+  let contracts = {};       // key -> { instance, address }
 
-// key -> { abiFile, addressKey, label }
-const CONTRACT_DEFS = {
-  oracle:     { abiFile: "OracleStorage.json",   addressKey: "oracle_storage_address", label: "Oracle" },
-  p2p:        { abiFile: "P2PEnergyMarket.json", addressKey: "p2p_market_address",     label: "P2P market" },
-  battery:    { abiFile: "BatteryManager.json",  addressKey: "battery_manager_address",label: "Battery manager" },
-  stablecoin: { abiFile: "EnergyStablecoin.json",addressKey: "stablecoin_address",     label: "Stablecoin" },
-};
+  const MAX_UINT256 = "115792089237316195423570985008687907853269984665640564039457584007913129639935";
 
-function log(msg) {
-  const el = document.getElementById("log");
-  const time = new Date().toLocaleTimeString();
-  el.textContent += `[${time}] ${msg}\n`;
-  el.scrollTop = el.scrollHeight;
-}
+  // key -> { abiFile, addressKey, label }
+  const CONTRACT_DEFS = {
+    oracle:     { abiFile: "OracleStorage.json",   addressKey: "oracle_storage_address", label: "Oracle" },
+    p2p:        { abiFile: "P2PEnergyMarket.json", addressKey: "p2p_market_address",     label: "P2P market" },
+    battery:    { abiFile: "BatteryManager.json",  addressKey: "battery_manager_address",label: "Battery manager" },
+    stablecoin: { abiFile: "EnergyStablecoin.json",addressKey: "stablecoin_address",    label: "Stablecoin" },
+  };
 
-function isValidAddress(addr) {
-  return typeof addr === "string" && /^0x[a-fA-F0-9]{40}$/.test(addr);
-}
-
-async function loadConfig() {
-  const res = await fetch("/api/config");
-  if (!res.ok) {
-    log("Failed to load /api/config: " + res.status);
-    return;
+  function isValidAddress(addr) {
+    return typeof addr === "string" && /^0x[a-fA-F0-9]{40}$/.test(addr);
   }
-  config = await res.json();
 
-  const contractListEl = document.getElementById("contractList");
-  contractListEl.innerHTML = Object.entries(CONTRACT_DEFS).map(([key, def]) => {
-    const addr = config.blockchain[def.addressKey];
-    const valid = isValidAddress(addr);
-    return `<div class="row"><strong>${def.label}</strong>
-      <span class="addr">${addr || "(missing)"}</span>
-      ${valid ? "" : '<span class="status-missing">not deployed / invalid</span>'}
-    </div>`;
-  }).join("");
+  async function loadConfig() {
+    try {
+      const res = await fetch("/api/config");
+      if (!res.ok) {
+        console.error("Failed to load /api/config:", res.status);
+        return;
+      }
+      config = await res.json();
 
-  const householdListEl = document.getElementById("householdList");
-  householdListEl.innerHTML = config.households.map(h =>
-    `<div class="row"><strong>${h.name || h.id}</strong> <span class="addr">${h.address}</span></div>`
-  ).join("");
-}
+      const contractListEl = document.getElementById("contractList");
+      contractListEl.innerHTML = Object.entries(CONTRACT_DEFS).map(([key, def]) => {
+        const addr = config.blockchain ? config.blockchain[def.addressKey] : null;
+        const valid = isValidAddress(addr);
+        return `<div class="row"><strong>${def.label}</strong>
+          <span class="addr">${addr || "(missing)"}</span>
+          ${valid ? "" : '<span class="status-missing">not deployed / invalid</span>'}
+        </div>`;
+      }).join("");
 
-async function connectWallet() {
-  if (!window.ethereum) {
-    alert("MetaMask not detected. Please install MetaMask.");
-    return;
-  }
-  web3 = new Web3(window.ethereum);
-  try {
-    const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
-    userAccount = accounts[0];
-    document.getElementById("accountDisplay").textContent = userAccount;
-    log("Connected: " + userAccount);
-    await buildContracts();
-  } catch (err) {
-    log("Wallet connection denied: " + err.message);
-  }
-}
-
-async function buildContracts() {
-  for (const [key, def] of Object.entries(CONTRACT_DEFS)) {
-    const address = config.blockchain[def.addressKey];
-    if (!isValidAddress(address)) {
-      log(`Skipping ${def.label}: no valid address yet`);
-      continue;
+      const householdListEl = document.getElementById("householdList");
+      householdListEl.innerHTML = (config.households || []).map(h =>
+        `<div class="row"><strong>${h.name || h.id}</strong> <span class="addr">${h.address}</span></div>`
+      ).join("");
+    } catch (err) {
+      console.error("Error in loadConfig:", err);
     }
-    const abiRes = await fetch(`/abi/${def.abiFile}`);
-    if (!abiRes.ok) {
-      log(`Skipping ${def.label}: ABI file ${def.abiFile} not found`);
-      continue;
+  }
+
+  async function connectWallet() {
+    if (!window.ethereum) {
+      alert("MetaMask not detected. Please install MetaMask.");
+      return;
     }
-    const artifact = await abiRes.json();
-    const abi = artifact.abi || artifact;
-    contracts[key] = {
-      instance: new web3.eth.Contract(abi, address),
-      address,
-    };
-    log(`Loaded contract: ${def.label} @ ${address}`);
-  }
-}
-
-function requireAccount() {
-  if (!userAccount) {
-    alert("Connect MetaMask first.");
-    return false;
-  }
-  return true;
-}
-
-function requireContract(key, label) {
-  if (!contracts[key]) {
-    alert(`${label} contract not loaded (missing address or ABI).`);
-    return false;
-  }
-  return true;
-}
-
-async function registerHousehold() {
-  if (!requireAccount() || !requireContract("p2p", "P2P market")) return;
-  const addr = document.getElementById("registerAddrInput").value.trim();
-  if (!isValidAddress(addr)) {
-    alert("Enter a valid 0x address first.");
-    return;
-  }
-  try {
-    const tx = await contracts.p2p.instance.methods.registerHousehold(addr)
-      .send({ from: userAccount });
-    log(`registerHousehold(${addr}) OK, tx ${tx.transactionHash}`);
-  } catch (err) {
-    log(`registerHousehold failed: ${err.message}`);
-  }
-}
-
-async function approveP2P() {
-  if (!requireAccount() || !requireContract("stablecoin", "Stablecoin") || !requireContract("p2p", "P2P market")) return;
-  try {
-    const tx = await contracts.stablecoin.instance.methods
-      .approve(contracts.p2p.address, MAX_UINT256)
-      .send({ from: userAccount });
-    log(`approve(P2P market, unlimited) OK, tx ${tx.transactionHash}`);
-  } catch (err) {
-    log(`approve failed: ${err.message}`);
-  }
-}
-
-async function checkAllowanceBalance() {
-  if (!requireAccount() || !requireContract("stablecoin", "Stablecoin") || !requireContract("p2p", "P2P market")) return;
-  try {
-    const [allowance, balance] = await Promise.all([
-      contracts.stablecoin.instance.methods.allowance(userAccount, contracts.p2p.address).call(),
-      contracts.stablecoin.instance.methods.balanceOf(userAccount).call(),
-    ]);
-    document.getElementById("allowanceBalanceDisplay").textContent =
-      `allowance=${allowance}, balance=${balance}`;
-  } catch (err) {
-    log(`allowance/balance check failed: ${err.message}`);
-  }
-}
-
-async function triggerSettleSlot() {
-  if (!requireAccount() || !requireContract("p2p", "P2P market")) return;
-  try {
-    const tx = await contracts.p2p.instance.methods.settleSlot().send({ from: userAccount });
-    log(`settleSlot() OK, tx ${tx.transactionHash}`);
-  } catch (err) {
-    log(`settleSlot failed: ${err.message}`);
-  }
-}
-
-async function setBatteryManager() {
-  if (!requireAccount() || !requireContract("p2p", "P2P market")) return;
-  const addr = document.getElementById("batteryManagerInput").value.trim();
-  if (!isValidAddress(addr)) {
-    alert("Enter a valid 0x address first.");
-    return;
-  }
-  try {
-    const tx = await contracts.p2p.instance.methods.setBatteryManager(addr).send({ from: userAccount });
-    log(`setBatteryManager(${addr}) OK, tx ${tx.transactionHash}`);
-  } catch (err) {
-    log(`setBatteryManager failed: ${err.message}`);
-  }
-}
-
-// ─────────────────────────────────────────────────────────────
-//  Script control (via local Node.js backend)
-// ─────────────────────────────────────────────────────────────
-
-async function refreshScriptStatus() {
-  try {
-    const res = await fetch("/api/scripts/status");
-    const status = await res.json();
-    for (const [name, running] of Object.entries(status)) {
-      const el = document.getElementById(`status-${name}`);
-      if (!el) continue;
-      el.textContent = running ? "running" : "stopped";
-      el.className = running ? "status-ok" : "status-off";
+    web3 = new Web3(window.ethereum);
+    try {
+      const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
+      userAccount = accounts[0];
+      document.getElementById("accountDisplay").textContent = userAccount;
+      await buildContracts();
+    } catch (err) {
+      console.error("Wallet connection denied:", err.message);
     }
-  } catch (err) {
-    log("Failed to fetch script status: " + err.message);
-  }
-}
-
-async function startScript(name) {
-  try {
-    const res = await fetch(`/api/scripts/${name}/start`, { method: "POST" });
-    const body = await res.json();
-    if (!res.ok) throw new Error(body.error || res.statusText);
-    log(`${name} started (pid ${body.pid})`);
-  } catch (err) {
-    log(`Failed to start ${name}: ${err.message}`);
-  }
-  refreshScriptStatus();
-}
-
-async function stopScript(name) {
-  try {
-    const res = await fetch(`/api/scripts/${name}/stop`, { method: "POST" });
-    const body = await res.json();
-    if (!res.ok) throw new Error(body.error || res.statusText);
-    log(`${name} stopped`);
-  } catch (err) {
-    log(`Failed to stop ${name}: ${err.message}`);
-  }
-  refreshScriptStatus();
-}
-
-// window.addEventListener("load", async () => {
-//   await loadConfig();
-//   await refreshScriptStatus();
-//   setInterval(refreshScriptStatus, 5000);
-// });
-
-window.addEventListener("load", async () => {
-  try {
-    await loadConfig();
-  } catch (err) {
-    console.error("Failed to load config:", err);
   }
 
-  try {
-    await refreshScriptStatus();
-    setInterval(refreshScriptStatus, 5000);
-  } catch (err) {
-    console.error("Script status service unavailable:", err);
+  async function buildContracts() {
+    for (const [key, def] of Object.entries(CONTRACT_DEFS)) {
+      const address = config?.blockchain?.[def.addressKey];
+      if (!isValidAddress(address)) {
+        console.warn(`Skipping ${def.label}: no valid address yet`);
+        continue;
+      }
+      const abiRes = await fetch(`/abi/${def.abiFile}`);
+      if (!abiRes.ok) {
+        console.warn(`Skipping ${def.label}: ABI file ${def.abiFile} not found`);
+        continue;
+      }
+      const artifact = await abiRes.json();
+      const abi = artifact.abi || artifact;
+      contracts[key] = {
+        instance: new web3.eth.Contract(abi, address),
+        address,
+      };
+    }
   }
-});
+
+  function requireAccount() {
+    if (!userAccount) {
+      alert("Connect MetaMask first.");
+      return false;
+    }
+    return true;
+  }
+
+  function requireContract(key, label) {
+    if (!contracts[key]) {
+      alert(`${label} contract not loaded (missing address or ABI).`);
+      return false;
+    }
+    return true;
+  }
+
+  async function registerHousehold() {
+    if (!requireAccount() || !requireContract("p2p", "P2P market")) return;
+    const addr = document.getElementById("registerAddrInput").value.trim();
+    if (!isValidAddress(addr)) {
+      alert("Enter a valid 0x address first.");
+      return;
+    }
+    try {
+      await contracts.p2p.instance.methods.registerHousehold(addr).send({ from: userAccount });
+    } catch (err) {
+      console.error("registerHousehold failed:", err.message);
+    }
+  }
+
+  async function approveP2P() {
+    if (!requireAccount() || !requireContract("stablecoin", "Stablecoin") || !requireContract("p2p", "P2P market")) return;
+    try {
+      await contracts.stablecoin.instance.methods
+        .approve(contracts.p2p.address, MAX_UINT256)
+        .send({ from: userAccount });
+    } catch (err) {
+      console.error("approve failed:", err.message);
+    }
+  }
+
+  async function checkAllowanceBalance() {
+    if (!requireAccount() || !requireContract("stablecoin", "Stablecoin") || !requireContract("p2p", "P2P market")) return;
+    try {
+      const [allowance, balance] = await Promise.all([
+        contracts.stablecoin.instance.methods.allowance(userAccount, contracts.p2p.address).call(),
+        contracts.stablecoin.instance.methods.balanceOf(userAccount).call(),
+      ]);
+      document.getElementById("allowanceBalanceDisplay").textContent =
+        `allowance=${allowance}, balance=${balance}`;
+    } catch (err) {
+      console.error("allowance/balance check failed:", err.message);
+    }
+  }
+
+  async function triggerSettleSlot() {
+    if (!requireAccount() || !requireContract("p2p", "P2P market")) return;
+    try {
+      await contracts.p2p.instance.methods.settleSlot().send({ from: userAccount });
+    } catch (err) {
+      console.error("settleSlot failed:", err.message);
+    }
+  }
+
+  async function setBatteryManager() {
+    if (!requireAccount() || !requireContract("p2p", "P2P market")) return;
+    const addr = document.getElementById("batteryManagerInput").value.trim();
+    if (!isValidAddress(addr)) {
+      alert("Enter a valid 0x address first.");
+      return;
+    }
+    try {
+      await contracts.p2p.instance.methods.setBatteryManager(addr).send({ from: userAccount });
+    } catch (err) {
+      console.error("setBatteryManager failed:", err.message);
+    }
+  }
+
+  // Automatically load configuration on page load
+  window.addEventListener("load", loadConfig);
 
 
 </script>
