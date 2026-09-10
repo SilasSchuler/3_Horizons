@@ -86,6 +86,16 @@
       <span id="status-oracle-register" class="status-icon"></span>
     </div>
   </div>
+
+  <h2>Approve Households</h2>
+  <div class="action-card">
+    <div class="row">
+      <button onclick="approveHouseholds()">Approve Households</button>
+      <span id="status-approve-households" class="status-icon"></span>
+    </div>
+  </div>
+
+
 </section>
 
 
@@ -427,13 +437,6 @@ async function deployBatteryManager() {
   await runDeployTask(cmd, null, "status-deploy-battery");
 }
 
-async function oracleRegisterHouseholds() {
-  const oracleAddr = config?.blockchain?.oracle_storage_address;
-  const frontendConfigPath = config?.frontend?.config_path;
-  const cmd = `python oracle_register_households.py`;
-  await runDeployTask(cmd, null, "status-oracle-register");
-}
-
 async function deployP2PMarket() {
   const stablecoinAddr = config?.blockchain?.stablecoin_address;
   const oracleAddr = config?.blockchain?.oracle_storage_address;
@@ -443,6 +446,20 @@ async function deployP2PMarket() {
   }
   const cmd = `python deploy_helper.py P2PEnergyMarket ${stablecoinAddr} ${oracleAddr}`;
   await runDeployTask(cmd, null, "status-deploy-p2p");
+}
+
+async function oracleRegisterHouseholds() {
+  const oracleAddr = config?.blockchain?.oracle_storage_address;
+  const frontendConfigPath = config?.frontend?.config_path;
+  const cmd = `python oracle_register_households.py`;
+  await runDeployTask(cmd, null, "status-oracle-register");
+}
+
+async function approveHouseholds() {
+  const oracleAddr = config?.blockchain?.oracle_storage_address;
+  const frontendConfigPath = config?.frontend?.config_path;
+  const cmd = `python approve_households.py`;
+  await runDeployTask(cmd, null, "status-approve-households");
 }
 
 
