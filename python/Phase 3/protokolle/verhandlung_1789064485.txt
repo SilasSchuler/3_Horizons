@@ -1,0 +1,31 @@
+### Zyklus 1
+### Zyklus 2
+
+house_01 bietet 306 Wh um 13 Uhr zu 0.080 CHFD/kWh
+  house_02: nichts Passendes
+  -> niemand nimmt an
+
+house_02 bietet 15 Wh um 13 Uhr zu 0.080 CHFD/kWh
+  house_01: nichts Passendes
+  -> niemand nimmt an
+### Zyklus 3
+
+house_01 bietet 122 Wh um 13 Uhr zu 0.080 CHFD/kWh
+  house_02: nichts Passendes
+  -> niemand nimmt an
+### Zyklus 4
+
+house_01 bietet 94 Wh um 13 Uhr zu 0.080 CHFD/kWh
+  house_02: nichts Passendes
+  -> niemand nimmt an
+### Zyklus 5
+### Zyklus 6
+### Zyklus 7
+### Zyklus 8
+### Zyklus 9
+### Zyklus 10
+### Zyklus 11
+### Zyklus 12
+### Zyklus 13
+### Zyklus 14
+### Zyklus 15
