@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "type": "module",
   "devDependencies": {
+    "@nomicfoundation/hardhat-verify": "^3.1.0",
     "@types/node": "^22.20.1",
     "hardhat": "^3.16.0",
     "typescript": "~6.0.3"

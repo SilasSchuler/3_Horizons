@@ -8,3 +8,6 @@ data/history.db
 artifacts/
 cache/
 node_modules/
+python/abi/
+python/logs/
+**/.env
