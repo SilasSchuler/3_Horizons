@@ -23,12 +23,22 @@
   max-width: 100%;
   height: auto;
   display: block;
+
+  .status-icon { font-size: 1.1rem; margin-left: 0.5rem; font-weight: bold; }
+.status-success { color: #0a7d2c; }
+.status-error { color: #d32f2f; }
+.status-loading { color: #e65100; font-style: italic; }
 }
 </style>
 </head>
 <body>
 
 <h1>P2P Energy Market Dashboard</h1>
+
+<input type="text" id="testArgsInput" placeholder="arg1 arg2">
+<button onclick="runTest()">Run test.py</button>
+<span id="status-test" class="status-icon"></span>
+
 
 <section>
   <h2>Wallet</h2>
@@ -59,55 +69,8 @@
   <img src="plots/battery_soc.png" alt="Battery Plot" class="responsive-img">
 </section>
 
-<section>
-  <h2>Market actions</h2>
-
-  <p></p>
-  <p></p>
-  <p></p>
-  <p></p>
-  <p></p>
-  <p></p>
-  <p></p>
-  <p></p>
 
 
-
-  <div class="row">
-    <input type="text" id="registerAddrInput" placeholder="0x... household address">
-    <button onclick="registerHousehold()">Register household on P2P market</button>
-  </div>
-  <div class="row">
-    <button onclick="approveP2P()">Approve P2P market as spender (unlimited)</button>
-  </div>
-  <div class="row">
-    <button onclick="checkAllowanceBalance()">Check my allowance / balance</button>
-    <span id="allowanceBalanceDisplay"></span>
-  </div>
-  <div class="row">
-    <button onclick="triggerSettleSlot()">Trigger settleSlot() manually</button>
-  </div>
-  <div class="row">
-    <input type="text" id="batteryManagerInput" placeholder="0x... BatteryManager address">
-    <button onclick="setBatteryManager()">Set battery manager on P2P market</button>
-  </div>
-</section>
-
-<section>
-  <h2>Background scripts</h2>
-  <div class="row">
-    <strong>oracle_writer.py</strong>
-    <span id="status-oracle_writer" class="status-off">stopped</span>
-    <button onclick="startScript('oracle_writer')">Start</button>
-    <button onclick="stopScript('oracle_writer')">Stop</button>
-  </div>
-  <div class="row">
-    <strong>settlement_trigger.py</strong>
-    <span id="status-settlement_trigger" class="status-off">stopped</span>
-    <button onclick="startScript('settlement_trigger')">Start</button>
-    <button onclick="stopScript('settlement_trigger')">Stop</button>
-  </div>
-</section>
 
 <script>
 
@@ -338,6 +301,52 @@ async function saveConfig() {
   }
 }
 
+async function runTest() {
+  const args = document.getElementById("testArgsInput").value.trim();
+  const cmd = args ? `python test.py ${args}` : `python test.py`;
+  await runDeployTask(cmd, null, "status-test");
+}
+
+// Sets a visual status (checkmark / cross / loading) on a status span
+function setStatus(elementId, type, message = "") {
+  const el = document.getElementById(elementId);
+  if (!el) return;
+
+  if (type === "loading") {
+    el.textContent = "⏳ Running...";
+    el.className = "status-icon status-loading";
+  } else if (type === "success") {
+    el.textContent = "✔️ " + message;
+    el.className = "status-icon status-success";
+  } else if (type === "error") {
+    el.textContent = "❌ " + message;
+    el.className = "status-icon status-error";
+  } else {
+    el.textContent = "";
+  }
+}
+
+// Generic function to call Python tasks via /api/run-task
+async function runDeployTask(command, saveKey, statusElId) {
+  setStatus(statusElId, "loading");
+  try {
+    const res = await fetch("/api/run-task", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ command, saveKey }),
+    });
+
+    const data = await res.json();
+    if (res.ok && data.success) {
+      setStatus(statusElId, "success");
+      await loadConfig();
+    } else {
+      setStatus(statusElId, "error", data.error || "Error");
+    }
+  } catch (err) {
+    setStatus(statusElId, "error", err.message);
+  }
+}
 
   // Automatically load configuration on page load
   window.addEventListener("load", loadConfig);

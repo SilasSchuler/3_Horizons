@@ -17,9 +17,9 @@
 
 const path = require("path");
 const fs = require("fs");
-const { spawn } = require("child_process");
 const express = require("express");
 const treeKill = require("tree-kill");
+const { exec, spawn } = require("child_process");
 require("dotenv").config();
 
 // 1. Initialize express FIRST
@@ -34,6 +34,7 @@ const PYTHON_DIR = path.resolve(__dirname, "../python");
 // Server looks for frontend/config.json first, falls back to python/config.json
 const LOCAL_CONFIG_PATH = path.join(__dirname, "config.json");
 const FALLBACK_CONFIG_PATH = path.join(PYTHON_DIR, "config.json");
+const HELPER_DIR = path.join(PYTHON_DIR, "helper"); 
 const ABI_DIR = path.join(PYTHON_DIR, "abi");
 const LOG_DIR = path.join(PYTHON_DIR, "logs");
 
@@ -119,6 +120,43 @@ app.use("/abi", express.static(ABI_DIR));
 // ─────────────────────────────────────────────────────────────
 //  Script control
 // ─────────────────────────────────────────────────────────────
+app.post("/api/run-task", (req, res) => {
+  const { command, saveKey } = req.body;
+
+  if (!command) {
+    return res.status(400).json({ success: false, error: "Kein Befehl angegeben" });
+  }
+
+  console.log(`[run-task] Executing: ${command}`);   // <-- add this
+
+  const activeConfigPath = getActiveConfigPath();
+
+  const envVars = {
+    ...process.env,
+    FRONTEND_CONFIG_PATH: activeConfigPath,
+  };
+
+  exec(command, { cwd: HELPER_DIR, env: envVars }, (error, stdout, stderr) => {
+    if (error) {
+      console.error(`[Task Error]: ${stderr || error.message}`);
+      return res.status(500).json({ success: false, error: stderr || error.message });
+    }
+
+    const addrMatch = stdout.match(/0x[a-fA-F0-9]{40}/);
+    if (saveKey && addrMatch) {
+      const deployedAddress = addrMatch[0];
+      const currentConfig = JSON.parse(fs.readFileSync(activeConfigPath, "utf-8"));
+
+      currentConfig.blockchain = currentConfig.blockchain || {};
+      currentConfig.blockchain[saveKey] = deployedAddress;
+
+      fs.writeFileSync(activeConfigPath, JSON.stringify(currentConfig, null, 2), "utf-8");
+      return res.json({ success: true, output: stdout, address: deployedAddress });
+    }
+
+    res.json({ success: true, output: stdout });
+  });
+});
 
 app.get("/api/scripts/status", (req, res) => {
   const status = {};

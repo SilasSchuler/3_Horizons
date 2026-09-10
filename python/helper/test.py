@@ -1,4 +1,6 @@
+import sys
 import logging
+
 logger = logging.getLogger("test")
 logger.setLevel(logging.INFO)
 formatter = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s", datefmt="%H:%M:%S")
@@ -6,6 +8,8 @@ formatter = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s", datef
 file_handler = logging.FileHandler("test.log", encoding="utf-8")
 file_handler.setFormatter(formatter)
 logger.addHandler(file_handler)
+
+logger.info(f"Called with arguments: {sys.argv[1:]}")
 
 print("Hello, World!")
 logger.info("Hello, World!")
