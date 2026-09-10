@@ -48,6 +48,11 @@ class FlexibleLoad:
     fenster_bis: float
     dauer_h: float = 1.0
 
+    # Optionale harte Frist: Bis zu dieser Stunde MUSS die Last gelaufen
+    # sein. Das E-Auto muss um 6 Uhr geladen sein, egal was es kostet -
+    # anders als die Waschmaschine, die auch morgen laufen kann.
+    spaetestens: Optional[float] = None
+
     # Wird gesetzt, sobald die Last eingeplant ist. Verhindert, dass
     # dieselbe Last mehrfach zugesagt wird.
     geplant_fuer: Optional[float] = None
@@ -62,10 +67,41 @@ class FlexibleLoad:
     def verfuegbar(self) -> bool:
         return self.geplant_fuer is None
 
-    def beschreibung(self) -> str:
+    def stunden_bis_frist(self, jetzt: float) -> Optional[float]:
+        """
+        Wie viele Stunden bleiben bis zur Frist? None ohne Frist.
+
+        Behandelt den Fall ueber Mitternacht: Ist es 22 Uhr und die Frist
+        6 Uhr, bleiben acht Stunden, nicht minus sechzehn.
+        """
+        if self.spaetestens is None:
+            return None
+        rest = self.spaetestens - jetzt
+        if rest < 0:
+            rest += 24
+        return rest
+
+    def dringend(self, jetzt: float, schwelle: float = 4.0) -> bool:
+        """
+        Wird die Zeit knapp?
+
+        Ein Agent mit dringender Last nimmt auch ein schlechteres Angebot,
+        weil ihn sonst der volle Netzpreis trifft - oder das Auto morgens
+        nicht faehrt.
+        """
+        rest = self.stunden_bis_frist(jetzt)
+        return rest is not None and rest <= schwelle
+
+    def beschreibung(self, jetzt: float = None) -> str:
         f = f"{self.fenster_von:g}-{self.fenster_bis:g} Uhr"
         status = "offen" if self.verfuegbar() else f"geplant fuer {self.geplant_fuer:g} Uhr"
-        return f"{self.name} ({self.energie_wh} Wh, Fenster {f}, {status})"
+        text = f"{self.name} ({self.energie_wh} Wh, Fenster {f}, {status}"
+        if self.spaetestens is not None:
+            text += f", muss bis {self.spaetestens:g} Uhr laufen"
+            if jetzt is not None and self.dringend(jetzt):
+                rest = self.stunden_bis_frist(jetzt)
+                text += f" - nur noch {rest:g} h"
+        return text + ")"
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -156,11 +192,28 @@ class HouseholdAgent:
         Diese Funktion ist auch der Rueckfall, wenn das LLM keine
         brauchbare Antwort liefert.
         """
-        if angebot.preis_pro_kwh >= self.markt_preis:
-            return None
-
         kandidaten = self.passende_lasten(angebot.stunde, angebot.menge_wh)
         if not kandidaten:
+            return None
+
+        # Dringende Lasten zuerst: Wer eine Frist hat, muss sie einhalten,
+        # auch wenn das Angebot nicht besonders guenstig ist.
+        dringende = [l for l in kandidaten if l.dringend(angebot.stunde)]
+
+        if dringende:
+            beste = max(dringende, key=lambda l: l.energie_wh)
+            rest = beste.stunden_bis_frist(angebot.stunde)
+            ersparnis = (self.markt_preis - angebot.preis_pro_kwh) * beste.energie_wh / 1000
+            return Zusage(
+                kaeufer=self.id,
+                last_name=beste.name,
+                menge_wh=beste.energie_wh,
+                begruendung=(f"{beste.name} muss bis {beste.spaetestens:g} Uhr laufen, "
+                             f"nur noch {rest:g} h Zeit"),
+            )
+
+        # Ohne Frist lohnt sich das Verschieben nur bei echtem Preisvorteil.
+        if angebot.preis_pro_kwh >= self.markt_preis:
             return None
 
         beste = max(kandidaten, key=lambda l: l.energie_wh)
@@ -221,6 +274,29 @@ class HouseholdAgent:
             f"{ergebnis.energie_wh} Wh von {angebot.verkaeufer}")
         return True
 
+    def notladung(self, stunde: float):
+        """
+        Lasten, die jetzt laufen MUESSEN, auch ohne guenstiges Angebot.
+
+        Ein E-Auto, das um 6 Uhr abfahren soll, wird notfalls zum vollen
+        Netzpreis geladen. Der Agent hat dann zwar nichts gespart, aber
+        seine Prognose stimmt trotzdem - und genau das zaehlt fuer die
+        Reputation.
+        """
+        faellige = []
+        for l in self.lasten:
+            if not l.verfuegbar() or l.spaetestens is None:
+                continue
+            rest = l.stunden_bis_frist(stunde)
+            # Letzte Gelegenheit: weniger Zeit uebrig als die Last dauert
+            if rest is not None and rest <= l.dauer_h:
+                l.geplant_fuer = stunde
+                faellige.append(l)
+                self.protokoll.append(
+                    f"[notladung] {l.name} zum Marktpreis, Frist "
+                    f"{l.spaetestens:g} Uhr ruecht naeher")
+        return faellige
+
     # ── Prognose ──────────────────────────────────────────────────
 
     def prognose_verbrauch(self, grundlast_wh: int, stunde: float) -> int:
@@ -252,7 +328,11 @@ def standard_lasten(rolle: str) -> list:
     if rolle == "flexibel":
         return [
             FlexibleLoad("waschmaschine", 1200, 8, 20, dauer_h=1.0),
-            FlexibleLoad("eauto", 8000, 18, 6, dauer_h=4.0),
+            # Taegliche Nachladung fuer den Arbeitsweg: rund 17 km hin und
+            # zurueck, bei 0.17 kWh/km also knapp 3 kWh. Das Auto steht ab
+            # 18 Uhr an der Wallbox und muss um 6 Uhr abfahrbereit sein.
+            # Zwei Stunden Ladezeit, letzte Gelegenheit also 4 Uhr.
+            FlexibleLoad("eauto", 2800, 18, 6, dauer_h=2.0, spaetestens=6.0),
             FlexibleLoad("waermepumpe", 2000, 6, 22, dauer_h=2.0),
         ]
     if rolle == "teilflexibel":

@@ -1,0 +1,66 @@
+### Zyklus 1
+
+house_01 bietet 1400 Wh um 9 Uhr zu 0.080 CHFD/kWh
+  house_02: bietet fuer waschmaschine (1200 Wh) - waschmaschine passt ins Fenster und spart 0.0240 CHFD
+  house_04: bietet fuer waschmaschine (1200 Wh) - waschmaschine passt ins Fenster und spart 0.0240 CHFD
+  house_05: nichts Passendes
+  -> Zuschlag an house_02 fuer 1200 Wh
+### Zyklus 2
+
+house_01 bietet 2600 Wh um 11 Uhr zu 0.080 CHFD/kWh
+  house_02: bietet fuer waschmaschine (1200 Wh) - waschmaschine passt ins Fenster und spart 0.0240 CHFD
+  house_04: bietet fuer waermepumpe (2000 Wh) - waermepumpe passt ins Fenster und spart 0.0400 CHFD
+  house_05: bietet fuer waermepumpe (2000 Wh) - waermepumpe passt ins Fenster und spart 0.0400 CHFD
+  -> Zuschlag an house_04 fuer 2000 Wh
+
+house_05 bietet 900 Wh um 11 Uhr zu 0.080 CHFD/kWh
+  house_01: nichts Passendes
+  house_02: bietet fuer geschirrspueler (900 Wh) - geschirrspueler passt ins Fenster und spart 0.0180 CHFD
+  house_04: nichts Passendes
+  -> Zuschlag an house_02 fuer 900 Wh
+### Zyklus 3
+
+house_01 bietet 3100 Wh um 13 Uhr zu 0.080 CHFD/kWh
+  house_02: bietet fuer waschmaschine (1200 Wh) - waschmaschine passt ins Fenster und spart 0.0240 CHFD
+  house_04: bietet fuer waermepumpe (2000 Wh) - waermepumpe passt ins Fenster und spart 0.0400 CHFD
+  house_05: bietet fuer waermepumpe (2000 Wh) - waermepumpe passt ins Fenster und spart 0.0400 CHFD
+  -> Zuschlag an house_04 fuer 2000 Wh
+
+house_02 bietet 1500 Wh um 13 Uhr zu 0.080 CHFD/kWh
+  house_01: nichts Passendes
+  house_04: bietet fuer waschmaschine (1200 Wh) - waschmaschine passt ins Fenster und spart 0.0240 CHFD
+  house_05: nichts Passendes
+  -> Zuschlag an house_04 fuer 1200 Wh
+
+house_05 bietet 1200 Wh um 13 Uhr zu 0.080 CHFD/kWh
+  house_01: nichts Passendes
+  house_02: bietet fuer waschmaschine (1200 Wh) - waschmaschine passt ins Fenster und spart 0.0240 CHFD
+  house_04: nichts Passendes
+  -> Zuschlag an house_02 fuer 1200 Wh
+### Zyklus 4
+
+house_02 bietet 2100 Wh um 15 Uhr zu 0.080 CHFD/kWh
+  house_01: bietet fuer waermepumpe (2000 Wh) - waermepumpe passt ins Fenster und spart 0.0400 CHFD
+  house_04: bietet fuer waermepumpe (2000 Wh) - waermepumpe passt ins Fenster und spart 0.0400 CHFD
+  house_05: bietet fuer waermepumpe (2000 Wh) - waermepumpe passt ins Fenster und spart 0.0400 CHFD
+  -> Zuschlag an house_01 fuer 2000 Wh
+
+house_05 bietet 800 Wh um 15 Uhr zu 0.080 CHFD/kWh
+  house_01: nichts Passendes
+  house_02: nichts Passendes
+  house_04: nichts Passendes
+  -> niemand nimmt an
+### Zyklus 5
+
+house_01 bietet 1300 Wh um 17 Uhr zu 0.080 CHFD/kWh
+  house_02: bietet fuer waschmaschine (1200 Wh) - waschmaschine passt ins Fenster und spart 0.0240 CHFD
+  house_04: bietet fuer waschmaschine (1200 Wh) - waschmaschine passt ins Fenster und spart 0.0240 CHFD
+  house_05: nichts Passendes
+  -> Zuschlag an house_02 fuer 1200 Wh
+### Zyklus 6
+
+house_02 bietet 400 Wh um 19 Uhr zu 0.080 CHFD/kWh
+  house_01: nichts Passendes
+  house_04: nichts Passendes
+  house_05: nichts Passendes
+  -> niemand nimmt an

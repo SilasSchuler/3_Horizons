@@ -252,8 +252,18 @@ def baue_html(runden, verlauf, stand, kalender, config, kal_tag=None):
     bc = config["blockchain"]
 
     # ── Verhandlung als Dialog ────────────────────────────────────
+    # Nur die Runden zeigen, in denen tatsaechlich etwas zustande kam.
+    # Reihenweise Absagen sind fuer die Praesentation uninteressant - sie
+    # entstehen, wenn der Ueberschuss zu klein fuer jedes Geraet ist.
+    interessant = [r for r in runden if r["zuschlag"]
+                   and "niemand" not in r["zuschlag"].lower()]
+    if len(interessant) < 2:
+        # Nichts zustande gekommen: dann wenigstens ein paar Runden zeigen,
+        # damit der Abschnitt nicht leer bleibt.
+        interessant = runden[-3:]
+
     dialog = []
-    for r in runden[-6:]:            # die letzten Runden reichen
+    for r in interessant[-6:]:
         m = re.match(r"(\S+) bietet (\d+) Wh um ([\d.]+) Uhr zu ([\d.]+)", r["angebot"])
         if m:
             wer, menge, stunde, preis = m.groups()
@@ -275,7 +285,14 @@ def baue_html(runden, verlauf, stand, kalender, config, kal_tag=None):
                 continue
             wer, was = ma.groups()
             farbe = FARBEN.get(wer, "#666")
-            if "lehnt ab" in was or "nichts Passendes" in was:
+            if "laedt" in was and "vollen Preis" in was:
+                dialog.append(
+                    f'<div class="antwort notladung">'
+                    f'<span class="wer" style="color:{farbe}">{wer}</span>'
+                    f'<span class="text">Kein Angebot mehr da. Ich lade jetzt '
+                    f'zum vollen Netzpreis &ndash; die Frist laesst mir keine '
+                    f'Wahl mehr.</span></div>')
+            elif "lehnt ab" in was or "nichts Passendes" in was:
                 dialog.append(
                     f'<div class="antwort ablehnung">'
                     f'<span class="wer" style="color:{farbe}">{wer}</span>'
@@ -291,10 +308,14 @@ def baue_html(runden, verlauf, stand, kalender, config, kal_tag=None):
                 mb = re.match(r"bietet fuer (\S+) \((\d+) Wh\) - (.*)", was)
                 if mb:
                     last, menge, grund = mb.groups()
+                    eilig = "muss bis" in grund
+                    cls = "zusage frist" if eilig else "zusage"
+                    einleitung = ("Ich nehme sie &ndash; ich habe keine Wahl mehr."
+                                  if eilig else "Ich nehme sie.")
                     dialog.append(
-                        f'<div class="antwort zusage">'
+                        f'<div class="antwort {cls}">'
                         f'<span class="wer" style="color:{farbe}">{wer}</span>'
-                        f'<span class="text">Ich nehme sie. Ich verschiebe '
+                        f'<span class="text">{einleitung} Ich lege '
                         f'meine <b>{last}</b> ({menge} Wh) in dieses Fenster.'
                         f'<br><span class="grund">{grund}</span></span></div>')
                 else:
@@ -302,8 +323,11 @@ def baue_html(runden, verlauf, stand, kalender, config, kal_tag=None):
                                   f'{wer}</span><span class="text">{was}'
                                   f'</span></div>')
 
-        if r["zuschlag"]:
+        if r["zuschlag"] and "niemand" not in r["zuschlag"].lower():
             dialog.append(f'<div class="zuschlag">{r["zuschlag"]}</div>')
+        elif r["zuschlag"]:
+            dialog.append('<div class="keiner">Das Angebot war zu klein fuer '
+                          'jedes Geraet &ndash; niemand konnte es brauchen.</div>')
         dialog.append("</div>")
 
     if not dialog:
@@ -388,6 +412,11 @@ def baue_html(runden, verlauf, stand, kalender, config, kal_tag=None):
   .antwort.zusage {{ background: #f0fdf4; }}
   .antwort.ablehnung {{ background: #fafafa; color: #777; }}
   .antwort.verworfen {{ background: #fef2f2; color: #991b1b; }}
+  .antwort.frist {{ background: #fffbeb; border-left: 3px solid #f59e0b; }}
+  .antwort.notladung {{ background: #fff7ed; border-left: 3px solid #ea580c;
+                        color: #7c2d12; }}
+  .keiner {{ color: #888; font-size: 13px; margin: 6px 0 0 28px;
+             font-style: italic; }}
   .wer {{ font-weight: 600; display: block; font-size: 13px;
           margin-bottom: 3px; }}
   .grund {{ color: #666; font-size: 13px; font-style: italic; }}
@@ -434,8 +463,16 @@ def baue_html(runden, verlauf, stand, kalender, config, kal_tag=None):
     Geraet in dieses Zeitfenster legen kann, nimmt an. Die Entscheidungen
     formuliert ein lokal laufendes Sprachmodell; jede Zusage wird
     anschliessend gegen Kalender und Energiebilanz geprueft.
+    Manche Geraete haben eine harte Frist &ndash; das E-Auto muss um sechs
+    abfahrbereit sein. Rueckt sie naeher, nimmt der Agent auch ein Angebot
+    ohne Ersparnis, und im Notfall laedt er zum vollen Netzpreis.
   </div>
   <div class="karte">{"".join(dialog)}</div>
+  <div class="erklaerung" style="margin-top:8px">
+    Gezeigt sind die Runden, in denen eine Verschiebung zustande kam.
+    Ist der Ueberschuss kleiner als jedes verschiebbare Geraet, lehnen alle
+    ab &ndash; das passiert morgens und abends regelmaessig.
+  </div>
 
   <h2>Woher die Zeitfenster kommen</h2>
   <div class="erklaerung">

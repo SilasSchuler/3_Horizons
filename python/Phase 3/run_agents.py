@@ -26,6 +26,7 @@ Aufruf:
     python run_agents.py --llm          # mit Ollama-Verhandlung
     python run_agents.py --llm 10       # 10 Zyklen
     python run_agents.py --trocken      # ohne Blockchain, nur Verhandlung
+    python run_agents.py --demo --llm   # Praesentationsszenario, sechs Haushalte
 
 Voraussetzung: setup_phase3.py ist gelaufen, config.json enthaelt die
 Adressen von Market und IncentiveController.
@@ -376,6 +377,48 @@ ROLLEN = {
 }
 
 
+
+# Szenario fuer den Demo-Modus: sechs Haushalte, verschiedene Rollen,
+# Angebote ueber den Tag verteilt. Gedacht fuer die Praesentation - laeuft
+# ohne Blockchain und ohne Wartezeit, zeigt aber die volle Bandbreite der
+# Verhandlung: grosse und kleine Angebote, verschiedene Zeitfenster, und
+# Haushalte, die aus unterschiedlichen Gruenden ablehnen.
+
+DEMO_HAUSHALTE = [
+    {"id": "house_01", "address": "0x01", "base_consumption_kwh_per_hour": 0.4},
+    {"id": "house_02", "address": "0x02", "base_consumption_kwh_per_hour": 0.6},
+    {"id": "house_03", "address": "0x03", "base_consumption_kwh_per_hour": 0.6},
+    {"id": "house_04", "address": "0x04", "base_consumption_kwh_per_hour": 0.7},
+    {"id": "house_05", "address": "0x05", "base_consumption_kwh_per_hour": 0.5},
+    {"id": "house_06", "address": "0x06", "base_consumption_kwh_per_hour": 0.5},
+]
+
+# (Sim-Stunde, [(Verkaeufer, Menge)]) - nachgebildet aus einem echten
+# Tagesverlauf: morgens wenig, mittags viel, nachmittags abklingend.
+DEMO_ANGEBOTE = [
+    (9.0,  [("house_01", 1400)]),
+    (11.0, [("house_01", 2600), ("house_05", 900)]),
+    (13.0, [("house_01", 3100), ("house_02", 1500), ("house_05", 1200)]),
+    (15.0, [("house_02", 2100), ("house_05", 800)]),
+    (17.0, [("house_01", 1300)]),
+    (19.0, [("house_02", 400)]),
+]
+
+# Zweites Szenario: die Nacht. Zeigt das Zusammenspiel von Speicher und
+# Frist. Tagsueber hat house_01 seine Batterie mit PV-Ueberschuss gefuellt;
+# nachts gibt sie diese Energie wieder ab. Auf der anderen Seite steht ein
+# E-Auto, das um 6 Uhr abfahrbereit sein muss - der Agent muss also nicht
+# nur guenstig einkaufen, sondern rechtzeitig fertig werden.
+DEMO_NACHT = [
+    (18.0, [("house_01", 700)]),      # Auto kommt an, Angebot zu klein
+    (20.0, [("house_01", 1900)]),     # immer noch zu wenig fuer die Ladung
+    (22.0, []),                        # niemand bietet etwas an
+    (0.0,  [("house_01", 2900)]),     # Batterie gibt ab: jetzt passt es
+    (2.0,  [("house_05", 3000)]),     # zweite Gelegenheit, Frist rueckt naeher
+    (4.0,  []),                        # letzte Chance - Notladung greift
+]
+
+
 # ─────────────────────────────────────────────────────────────────────
 #  Blockchain
 # ─────────────────────────────────────────────────────────────────────
@@ -538,17 +581,39 @@ def main():
     modus = "regelbasiert"
     zyklen = 5
     trocken = False
+    demo = False
+    nacht = False
 
     for arg in sys.argv[1:]:
         if arg == "--llm":
             modus = "llm"
         elif arg == "--trocken":
             trocken = True
+        elif arg == "--demo":
+            trocken = True
+            demo = True
+        elif arg == "--nacht":
+            trocken = True
+            demo = True
+            nacht = True
         else:
             zyklen = int(arg)
 
     with open(CONFIG_PATH) as f:
         config = json.load(f)
+
+    szenario = DEMO_NACHT if nacht else DEMO_ANGEBOTE
+
+    if demo:
+        config = dict(config)
+        config["households"] = DEMO_HAUSHALTE
+        zyklen = min(zyklen, len(szenario))
+        if nacht:
+            print("Nacht-Szenario: der Speicher gibt ab, das E-Auto muss "
+                  "bis 6 Uhr geladen sein.\n")
+        else:
+            print("Demo-Modus: sechs Haushalte, Angebote ueber den Tag "
+                  "verteilt.\n")
 
     if modus == "llm":
         if verfuegbar():
@@ -581,20 +646,33 @@ def main():
                   f"{wetter['wolken']}% Wolken")
         else:
             slot = 1000 + zyklus
-            print(f"\nTrockenlauf, Slot {slot}")
+            if not demo:
+                print(f"\nTrockenlauf, Slot {slot}")
+            else:
+                print()
 
         # Ueberschuesse ermitteln
         ueberschuesse = []
         stunde = 13.0     # Angebotszeitpunkt: Mittagsspitze
-        for a in agenten:
-            if chain:
-                verbrauch, produktion = chain.meter(a.adresse)
-                netto = produktion - verbrauch
-            else:
-                netto = 2000 if a.id in ("house_01", "house_05") else -400
-            if netto > 0:
-                ueberschuesse.append((a.id, stunde, netto))
-                print(f"  {a.id}: {netto} Wh Ueberschuss")
+
+        if demo:
+            stunde, angebote = szenario[(zyklus - 1) % len(szenario)]
+            print(f"Simulationszeit {stunde:g} Uhr")
+            if not angebote:
+                print("  Niemand hat etwas anzubieten.")
+            for wer, menge in angebote:
+                ueberschuesse.append((wer, stunde, menge))
+                print(f"  {wer}: {menge} Wh Ueberschuss")
+        else:
+            for a in agenten:
+                if chain:
+                    verbrauch, produktion = chain.meter(a.adresse)
+                    netto = produktion - verbrauch
+                else:
+                    netto = 2000 if a.id in ("house_01", "house_05") else -400
+                if netto > 0:
+                    ueberschuesse.append((a.id, stunde, netto))
+                    print(f"  {a.id}: {netto} Wh Ueberschuss")
 
         if not ueberschuesse:
             print("  Kein Ueberschuss - nichts zu verhandeln.")
@@ -605,6 +683,16 @@ def main():
         vereinbarungen, protokoll = verhandlungsrunde(
             agenten, ueberschuesse, modus=modus)
         dauer = time.time() - t0
+        # Wer eine Frist hat und nichts bekommen hat, muss jetzt selbst
+        # laden - zum vollen Netzpreis. Der Agent spart dann nichts, haelt
+        # aber seine Zusage und seine Prognose ein.
+        for a in agenten:
+            for last in a.notladung(stunde):
+                protokoll.append(
+                    f"\n  {a.id}: laedt {last.name} ({last.energie_wh} Wh) "
+                    f"zum vollen Preis - Frist {last.spaetestens:g} Uhr, "
+                    f"kein guenstiges Angebot mehr abzuwarten")
+
         print("\n".join(protokoll))
         print(f"\n  {len(vereinbarungen)} Vereinbarungen in {dauer:.1f}s")
         protokoll_gesamt.extend([f"### Zyklus {zyklus}"] + protokoll)

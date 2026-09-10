@@ -90,4 +90,41 @@ print("\n=== Protokoll ===")
 for zeile in a.protokoll:
     print("  " + zeile)
 
+
+print("\n=== Lasten mit Frist (E-Auto) ===")
+
+auto = FlexibleLoad("eauto", 2800, 18, 6, dauer_h=2.0, spaetestens=6.0)
+pruefe("Frist 18 Uhr -> 12 h", auto.stunden_bis_frist(18) == 12)
+pruefe("Frist 23 Uhr -> 7 h", auto.stunden_bis_frist(23) == 7)
+pruefe("Frist 2 Uhr -> 4 h", auto.stunden_bis_frist(2) == 4)
+pruefe("20 Uhr noch nicht dringend", not auto.dringend(20))
+pruefe("3 Uhr dringend", auto.dringend(3))
+
+wama = FlexibleLoad("waschmaschine", 1200, 8, 20)
+pruefe("ohne Frist nie dringend", not wama.dringend(3))
+pruefe("ohne Frist keine Reststunden", wama.stunden_bis_frist(3) is None)
+
+# Bei knapper Frist wird auch ein Angebot ohne Ersparnis angenommen
+d = HouseholdAgent("h", "0x0", standard_lasten("flexibel"))
+z = d.entscheide_regelbasiert(Angebot("v", 3.0, 3000, d.markt_preis))
+pruefe("Frist schlaegt fehlenden Preisvorteil",
+       z is not None and z.last_name == "eauto")
+
+e = HouseholdAgent("h", "0x0", standard_lasten("flexibel"))
+pruefe("ohne Dringlichkeit kein Zuschlag ohne Vorteil",
+       e.entscheide_regelbasiert(Angebot("v", 20.0, 3000, e.markt_preis)) is None)
+
+print("\n=== Notladung ===")
+
+f = HouseholdAgent("h", "0x0", standard_lasten("flexibel"))
+pruefe("22 Uhr noch keine Notladung", f.notladung(22) == [])
+
+g = HouseholdAgent("h", "0x0", standard_lasten("flexibel"))
+faellig = g.notladung(4)
+pruefe("4 Uhr Notladung faellig",
+       len(faellig) == 1 and faellig[0].name == "eauto")
+pruefe("Notladung setzt den Fahrplan",
+       any(l.name == "eauto" and l.geplant_fuer == 4 for l in g.lasten))
+pruefe("Notladung nur einmal", g.notladung(5) == [])
+
 print(f"\n{ok_zaehler} bestanden, {fehl_zaehler} fehlgeschlagen")
