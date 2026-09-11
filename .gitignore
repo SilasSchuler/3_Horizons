@@ -1,13 +1,45 @@
-.DS_Store
-python/.env
-python/venv/
-python/__pycache__/
+# ── Geheimnisse ──────────────────────────────────────────────────
+# Muss ganz oben stehen und ausnahmslos greifen.
+.env
+**/.env
+!**/.env.example
+
+# ── Python ───────────────────────────────────────────────────────
+venv/
+**/venv/
+__pycache__/
 **/__pycache__/
 *.pyc
-data/history.db
+.ipynb_checkpoints/
+
+# ── Node ─────────────────────────────────────────────────────────
+node_modules/
+**/node_modules/
+
+# ── Hardhat ──────────────────────────────────────────────────────
 artifacts/
 cache/
-node_modules/
+typechain-types/
+
+# ── Erzeugte Dateien ─────────────────────────────────────────────
+# ABIs entstehen beim Kompilieren neu, Plots und Dashboards bei jedem
+# Lauf. Sie gehoeren nicht in die Versionierung - sonst erzeugt jeder
+# Durchlauf eine Aenderung, die niemand lesen will.
 python/abi/
 python/logs/
-**/.env
+python/plots/
+python/data/*.db
+**/*.log
+
+# Das Dashboard wird aus Protokoll und Chain-Daten erzeugt.
+python/Phase 3/dashboard.html
+
+# Verhandlungsprotokolle entstehen bei jedem Lauf neu. Einzelne
+# aussagekraeftige Laeufe koennen mit "git add -f" bewusst aufgenommen
+# werden - etwa der, in dem die Pruefschicht dreimal eingegriffen hat.
+python/Phase 3/protokolle/
+
+# ── Betriebssystem ───────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
