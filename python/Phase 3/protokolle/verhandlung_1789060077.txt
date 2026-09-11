@@ -1,5 +1,0 @@
-### Zyklus 1
-
-house_01 bietet 2000 Wh um 13 Uhr zu 0.080 CHFD/kWh
-  house_02: bietet fuer waschmaschine (1200 Wh) - Die Waschmaschine ist um 13 Uhr verfügbar und liegt im Zeitfenster.
-  -> Zuschlag an house_02 fuer 1200 Wh
