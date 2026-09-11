@@ -19,12 +19,12 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from web3 import Web3
+from web3.exceptions import ContractLogicError
 from web3.logs import DISCARD
 from web3.middleware import ExtraDataToPOAMiddleware
 
 load_dotenv()
 
-CONFIG_PATH = Path(__file__).parent / "config.json"
 CONFIG_PATH_ENV = os.getenv("FRONTEND_CONFIG_PATH")
 if CONFIG_PATH_ENV:
     CONFIG_PATH = Path(CONFIG_PATH_ENV)
@@ -61,6 +61,33 @@ def log_settlement_events(market, receipt, slot_hint: str):
         print(f"  Keine EnergyTraded/SlotSettled Events im Receipt gefunden (slot={slot_hint})")
 
 
+def neuer_slot_vorhanden(oracle, market):
+    """
+    Prüft ohne Transaktion, ob überhaupt etwas abzurechnen ist.
+
+    Der Contract lehnt einen bereits abgerechneten Slot mit
+    "Current slot must be greater than last settled slot" ab. Das ist
+    korrekt, kostet aber trotzdem Gas, weil die Transaktion erst beim
+    Ausführen scheitert. Der Oracle braucht für seine acht Transaktionen
+    pro Slot mitunter länger als sechzig Sekunden - der Trigger überholt
+    ihn dann regelmässig.
+
+    Zwei Lesezugriffe kosten nichts und ersparen die Fehlschläge.
+
+    Gibt (bereit, aktueller_slot, letzter_slot) zurück. Lässt sich der
+    Zustand nicht ermitteln, wird bereit=True gemeldet und der Contract
+    entscheidet - besser ein vergeblicher Versuch als ein verpasster Slot.
+    """
+    try:
+        aktuell = oracle.functions.getCurrentSlot().call()
+        letzter = market.functions.lastSettledSlot().call()
+        return aktuell > letzter, aktuell, letzter
+    except Exception as e:
+        print(f"  Slot-Vorprüfung nicht möglich ({type(e).__name__}), "
+              f"versuche es trotzdem")
+        return True, None, None
+
+
 def main():
     with open(CONFIG_PATH) as f:
         config = json.load(f)
@@ -79,14 +106,52 @@ def main():
         abi=market_abi
     )
 
+    # Für die Vorprüfung. Fehlt die Oracle-Adresse oder das ABI, läuft der
+    # Trigger wie bisher ohne Vorprüfung weiter.
+    oracle = None
+    try:
+        with open(ABI_DIR / "OracleStorage.json") as f:
+            oracle_abi = json.load(f)["abi"]
+        oracle = w3.eth.contract(
+            address=Web3.to_checksum_address(bc["oracle_storage_address"]),
+            abi=oracle_abi
+        )
+    except Exception as e:
+        print(f"Hinweis: Slot-Vorprüfung deaktiviert ({type(e).__name__}). "
+              f"Der Trigger sendet wie bisher bei jedem Durchlauf.")
+
     print("\n=== Settlement Trigger gestartet ===\n")
     print(f"Account: {account.address}")
     print(f"Market-Contract: {bc['p2p_market_address']}")
+    if oracle is not None:
+        print(f"Oracle-Contract: {bc['oracle_storage_address']}")
+        print("Slot-Vorprüfung aktiv: es wird nur gesendet, wenn ein neuer "
+              "Slot vorliegt.")
+
+    uebersprungen = 0
 
     try:
         while True:
             try:
-                print(f"\n→ Trigger settleSlot() @ {time.strftime('%H:%M:%S')}")
+                if oracle is not None:
+                    bereit, aktuell, letzter = neuer_slot_vorhanden(oracle, market)
+                    if not bereit:
+                        uebersprungen += 1
+                        print(f"\n· Kein neuer Slot @ {time.strftime('%H:%M:%S')} "
+                              f"- Oracle steht bei {aktuell}, zuletzt abgerechnet "
+                              f"{letzter}. Nichts zu tun, kein Gas verbraucht "
+                              f"(bisher {uebersprungen}x übersprungen).")
+                        print("  (warte 60s bis nächster Slot)")
+                        time.sleep(60)
+                        continue
+                    if aktuell is not None:
+                        print(f"\n→ Trigger settleSlot() @ {time.strftime('%H:%M:%S')} "
+                              f"- Slot {letzter} bis {aktuell} offen")
+                    else:
+                        print(f"\n→ Trigger settleSlot() @ {time.strftime('%H:%M:%S')}")
+                else:
+                    print(f"\n→ Trigger settleSlot() @ {time.strftime('%H:%M:%S')}")
+
                 nonce = w3.eth.get_transaction_count(account.address, "pending")
                 tx = market.functions.settleSlot().build_transaction({
                     "from": account.address,
@@ -105,8 +170,13 @@ def main():
                     print(f"  Settlement erfolgreich (Block {receipt.blockNumber})")
                     log_settlement_events(market, receipt, slot_hint=tx_hash.hex())
                 else:
+                    # Kann trotz Vorprüfung passieren: Zwischen Prüfung und
+                    # Ausführung kann ein anderer Trigger denselben Slot
+                    # abgerechnet haben.
                     print(f"  Settlement fehlgeschlagen! tx={tx_hash.hex()}")
 
+            except ContractLogicError as e:
+                print(f"  Contract hat abgelehnt: {e}")
             except Exception as e:
                 print(f"  Fehler: {e}")
 
@@ -114,6 +184,9 @@ def main():
             time.sleep(60)  # 1 Slot warten
     except KeyboardInterrupt:
         print("\nSettlement Trigger gestoppt.")
+        if uebersprungen:
+            print(f"{uebersprungen} Durchläufe ohne neuen Slot übersprungen, "
+                  f"entsprechend kein Gas verschwendet.")
 
 
 if __name__ == "__main__":
