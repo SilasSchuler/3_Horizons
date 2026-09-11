@@ -40,8 +40,7 @@ const LOG_DIR = path.join(PYTHON_DIR, "logs");
 
 fs.mkdirSync(LOG_DIR, { recursive: true });
 
-// Whitelist of scripts that are allowed to be started this way — never build
-// the command from unvalidated user input, or any string becomes an RCE.
+// Whitelist of scripts
 const SCRIPTS = {
   oracle_writer: "oracle_writer.py",
   settlement_trigger: "settlement_trigger.py",
@@ -163,25 +162,20 @@ app.post("/api/scripts/:name/start", (req, res) => {
     return res.status(409).json({ error: `${name} is already running` });
   }
 
-  const scriptPath = path.join(PYTHON_DIR, scriptFile);
+  const scriptPath = path.join(HELPER_DIR, scriptFile);
+  console.log(`[${name}] Will execute: ${scriptPath}`);
+
   if (!fs.existsSync(scriptPath)) {
-    return res.status(404).json({ error: `${scriptFile} not found in ${PYTHON_DIR}` });
+    return res.status(404).json({ error: `${scriptFile} not found in ${HELPER_DIR}` });
   }
 
   // Logs für diesen Durchlauf überschreiben (statt anhängen)
   const outLog = fs.createWriteStream(path.join(LOG_DIR, `${name}.stdout.log`), { flags: "w" });
   const errLog = fs.createWriteStream(path.join(LOG_DIR, `${name}.stderr.log`), { flags: "w" });
-
-  // "python" vs "python3": adjust if your setup needs a specific interpreter
-  // (e.g. a venv's python.exe) — could also come from an env var per script.
-  // const child = spawn("python", [scriptFile], { cwd: PYTHON_DIR });
   
  // Ensure stdout is line-buffered for real-time logging in the console. Used by Frontend for live updates.
-  const child = spawn("python", ["-u", scriptFile], { cwd: PYTHON_DIR });
+  const child = spawn("python", ["-u", scriptFile], { cwd: HELPER_DIR });
 
-  // child.stderr.on("data", (chunk) => {
-  //   console.error(`[${name}] STDERR: ${chunk.toString().trim()}`);
-  // });
 
   child.stdout.pipe(outLog);
   child.stderr.pipe(errLog);
@@ -208,10 +202,7 @@ app.post("/api/scripts/:name/stop", (req, res) => {
     return res.status(409).json({ error: `${name} is not running` });
   }
 
-  // Plain child.kill() often fails to actually stop the process on Windows
-  // when spawn() went through a shell — tree-kill uses taskkill /T /F there
-  // (and kills the whole process group on Linux/Mac), so it's used
-  // unconditionally rather than branching on process.platform.
+  // Tree-kill ensures that the entire process tree is terminated, not just the parent process.
   treeKill(child.pid, "SIGTERM", (err) => {
     if (err) {
       console.error(`[${name}] failed to stop:`, err);

@@ -10,7 +10,6 @@ Voraussetzung:
 """
 
 import json
-from logging import Logger
 import os
 import sys
 import time
@@ -25,29 +24,12 @@ from data_simulator import EnergySimulator
 load_dotenv()
 
 
-
-import logging
-
-logger = logging.getLogger("test")
-logger.setLevel(logging.INFO)
-formatter = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s", datefmt="%H:%M:%S")
-
-file_handler = logging.FileHandler("test.log", encoding="utf-8")
-file_handler.setFormatter(formatter)
-logger.addHandler(file_handler)
-
-
-
-
 CONFIG_PATH = Path(__file__).parent / "config.json"
 CONFIG_PATH_ENV = os.getenv("FRONTEND_CONFIG_PATH")
 if CONFIG_PATH_ENV:
     CONFIG_PATH = Path(CONFIG_PATH_ENV)
 else:
     CONFIG_PATH = Path(__file__).parent.parent / "config.json" # Fallback auf python/config.json
-
-logger.info(f"Using config path: {CONFIG_PATH}")
-
 
 ABI_DIR = Path(__file__).parent.parent / "abi" # Zeigt auf python/abi/
 
@@ -147,7 +129,6 @@ class OracleWriter:
     def push_single_slot(self):
         """Liest Simulator-Daten und schreibt genau einen Slot on-chain."""
         data = self.simulator.get_current_readings()
-        Logger.info(f"Aktuelle Simulationsdaten: {data}")
 
         # 1. Slot-Counter aktualisieren
         print(f"\n→ Pushe einzelnen Slot {time.strftime('%H:%M:%S')} (Sim-h={data['sim_hour']:.2f})")

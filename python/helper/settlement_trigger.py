@@ -1,8 +1,5 @@
 """
 settlement_trigger.py
-
-STARTER-CODE - Teams passen die TODO-Blöcke an ihren eigenen Contract an.
-
 Ruft jede Simulationsminute settleSlot() auf dem P2PEnergyMarket-Contract auf.
 Damit wird der vom Oracle gefütterte Slot abgerechnet:
   - Produzenten erhalten Stablecoins
@@ -12,14 +9,11 @@ Voraussetzung:
   - .env mit TRIGGER_PRIVATE_KEY (kann derselbe Key wie DEPLOYER sein)
   - config.json mit p2p_market_address gesetzt
   - Konsumenten müssen vorher approve() auf den Stablecoin aufgerufen haben
-
-
 """
 
 import json
 import os
 import sys
-
 import time
 from pathlib import Path
 
@@ -35,12 +29,9 @@ CONFIG_PATH_ENV = os.getenv("FRONTEND_CONFIG_PATH")
 if CONFIG_PATH_ENV:
     CONFIG_PATH = Path(CONFIG_PATH_ENV)
 else:
-    CONFIG_PATH = Path(__file__).parent.parent / "config.json" # Fallback auf python/config.json
-    
-ABI_DIR = Path(__file__).parent.parent / "abi" # Zeigt auf python/abi/
+    CONFIG_PATH = Path(__file__).parent.parent / "config.json"  # Fallback auf python/config.json
 
-LOG_DIR = Path(__file__).parent / "logs"
-LOG_DIR.mkdir(exist_ok=True)
+ABI_DIR = Path(__file__).parent.parent / "abi"  # Zeigt auf python/abi/
 
 PRIVATE_KEY = os.getenv("TRIGGER_PRIVATE_KEY") or os.getenv("DEPLOYER_PRIVATE_KEY")
 if not PRIVATE_KEY:
@@ -48,30 +39,26 @@ if not PRIVATE_KEY:
     sys.exit(1)
 
 # ─────────────────────────────────────────────────────────────
-#  Logging setup: console + file, same format on both
-# ─────────────────────────────────────────────────────────────
+
 
 def log_settlement_events(market, receipt, slot_hint: str):
     """Decode and log EnergyTraded + SlotSettled events from a settleSlot() receipt."""
     trades = market.events.EnergyTraded().process_receipt(receipt, errors=DISCARD)
     for trade in trades:
         args = trade["args"]
-        print(
-            "  TRADE slot=%s producer=%s consumer=%s energyWh=%s amountPaid=%s",
-            args["slot"], args["producer"], args["consumer"],
-            args["energyWh"], args["amountPaid"],
-        )
+        print(f"  TRADE slot={args['slot']} producer={args['producer']} "
+              f"consumer={args['consumer']} energyWh={args['energyWh']} "
+              f"amountPaid={args['amountPaid']}")
 
     settled = market.events.SlotSettled().process_receipt(receipt, errors=DISCARD)
     for s in settled:
         args = s["args"]
-        print(
-            "  SLOT_SETTLED slot=%s totalEnergyTraded=%s totalPaid=%s tradeCount=%d",
-            args["slot"], args["totalEnergyTraded"], args["totalPaid"], len(trades),
-        )
+        print(f"  SLOT_SETTLED slot={args['slot']} "
+              f"totalEnergyTraded={args['totalEnergyTraded']} "
+              f"totalPaid={args['totalPaid']} tradeCount={len(trades)}")
 
     if not trades and not settled:
-        print("  No EnergyTraded/SlotSettled events found in receipt (slot=%s)" % slot_hint)
+        print(f"  Keine EnergyTraded/SlotSettled Events im Receipt gefunden (slot={slot_hint})")
 
 
 def main():
@@ -92,37 +79,41 @@ def main():
         abi=market_abi
     )
 
-    print("Settlement-Trigger gestartet, Account: %s" % account.address)
-    print("Market-Contract: %s" % bc["p2p_market_address"])
-    # print("Log-Datei: %s" % (LOG_DIR / "settlement_trigger.log"))
+    print("\n=== Settlement Trigger gestartet ===\n")
+    print(f"Account: {account.address}")
+    print(f"Market-Contract: {bc['p2p_market_address']}")
 
-    while True:
-        try:
-            print("Trigger settleSlot()")
-            nonce = w3.eth.get_transaction_count(account.address, "pending")
-            tx = market.functions.settleSlot().build_transaction({
-                "from": account.address,
-                "nonce": nonce,
-                "chainId": bc["chain_id"],
-                "gas": 1_500_000,                 # eventuell anpassen
-                "maxFeePerGas": w3.to_wei("30", "gwei"),
-                "maxPriorityFeePerGas": w3.to_wei("2", "gwei"),
-            })
-            signed = w3.eth.account.sign_transaction(tx, PRIVATE_KEY)
-            tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
-            print("  TX: %s" % tx_hash.hex())
-            receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+    try:
+        while True:
+            try:
+                print(f"\n→ Trigger settleSlot() @ {time.strftime('%H:%M:%S')}")
+                nonce = w3.eth.get_transaction_count(account.address, "pending")
+                tx = market.functions.settleSlot().build_transaction({
+                    "from": account.address,
+                    "nonce": nonce,
+                    "chainId": bc["chain_id"],
+                    "gas": 1_500_000,  # eventuell anpassen
+                    "maxFeePerGas": w3.to_wei("30", "gwei"),
+                    "maxPriorityFeePerGas": w3.to_wei("2", "gwei"),
+                })
+                signed = w3.eth.account.sign_transaction(tx, PRIVATE_KEY)
+                tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+                print(f"  TX: {tx_hash.hex()}")
+                receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
 
-            if receipt.status == 1:
-                print("  Settlement erfolgreich (Block %d)" % receipt.blockNumber)
-                log_settlement_events(market, receipt, slot_hint=tx_hash.hex())
-            else:
-                print("  Settlement fehlgeschlagen! tx=%s" % tx_hash.hex())
+                if receipt.status == 1:
+                    print(f"  Settlement erfolgreich (Block {receipt.blockNumber})")
+                    log_settlement_events(market, receipt, slot_hint=tx_hash.hex())
+                else:
+                    print(f"  Settlement fehlgeschlagen! tx={tx_hash.hex()}")
 
-        except Exception as e:
-            print("  Fehler: %s" % e)
+            except Exception as e:
+                print(f"  Fehler: {e}")
 
-        time.sleep(60)  # 1 Slot warten
+            print("  (warte 60s bis nächster Slot)")
+            time.sleep(60)  # 1 Slot warten
+    except KeyboardInterrupt:
+        print("\nSettlement Trigger gestoppt.")
 
 
 if __name__ == "__main__":
