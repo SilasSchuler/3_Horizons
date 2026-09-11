@@ -94,7 +94,7 @@ def main():
 
     print("Settlement-Trigger gestartet, Account: %s" % account.address)
     print("Market-Contract: %s" % bc["p2p_market_address"])
-    print("Log-Datei: %s" % (LOG_DIR / "settlement_trigger.log"))
+    # print("Log-Datei: %s" % (LOG_DIR / "settlement_trigger.log"))
 
     while True:
         try:

@@ -245,14 +245,13 @@ async function pollScriptLogs() {
       if (!res.ok) continue;
       const data = await res.json();
 
-      console.log(`[poll] ${name}:`, data);   // <-- add this
-
       const logEl = document.getElementById(`log-${name}`);
-      console.log(`[poll] ${name} element found:`, !!logEl);   // <-- and this
-
       if (logEl) {
         const atBottom = logEl.scrollTop + logEl.clientHeight >= logEl.scrollHeight - 5;
-        logEl.textContent = data.stdout || "(no output yet)";
+        const combined = [data.stdout, data.stderr]
+          .filter(Boolean)
+          .join("\n");
+        logEl.textContent = combined || "(no output yet)";
         if (atBottom) logEl.scrollTop = logEl.scrollHeight;
       }
       updateScriptUI(name, data.running);
