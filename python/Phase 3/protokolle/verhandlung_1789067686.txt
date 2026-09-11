@@ -1,0 +1,32 @@
+### Zyklus 1
+
+house_01 bietet 700 Wh um 18 Uhr zu 0.080 CHFD/kWh
+  house_02: lehnt ab
+  house_04: Zusage verworfen (1200 Wh zugesagt, aber nur 700 Wh im Angebot)
+  house_05: Zusage verworfen (waermepumpe braucht 2000 Wh, zugesagt wurden 700 Wh)
+  -> niemand nimmt an
+### Zyklus 2
+
+house_01 bietet 1900 Wh um 20 Uhr zu 0.080 CHFD/kWh
+  house_02: bietet fuer waschmaschine (1200 Wh) - Die Waschmaschine ist verfügbar und ihr Zeitfenster beinhaltet 20 Uhr.
+  house_04: lehnt ab
+  house_05: lehnt ab
+  -> Zuschlag an house_02 fuer 1200 Wh
+### Zyklus 3
+### Zyklus 4
+
+house_01 bietet 2900 Wh um 0 Uhr zu 0.080 CHFD/kWh
+  house_02: lehnt ab
+  house_04: bietet fuer eauto (2800 Wh) - Das Zeitfenster der Eauto beinhaltet 0 Uhr und der Energiebedarf wird gedeckt.
+  house_05: lehnt ab
+  -> Zuschlag an house_04 fuer 2800 Wh
+### Zyklus 5
+
+house_05 bietet 3000 Wh um 2 Uhr zu 0.080 CHFD/kWh
+  house_01: lehnt ab
+  house_02: Zusage verworfen (waschmaschine darf nur zwischen 8 und 20 Uhr laufen, angeboten war 2 Uhr)
+  house_04: bietet fuer eauto (2800 Wh) - eauto ist um 2 Uhr verfügbar und muss bis 6 Uhr laufen.
+  -> Zuschlag an house_04 fuer 2800 Wh
+### Zyklus 6
+
+  house_04: laedt eauto (2800 Wh) zum vollen Preis - Frist 6 Uhr, kein guenstiges Angebot mehr abzuwarten

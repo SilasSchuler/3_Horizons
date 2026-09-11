@@ -1,0 +1,32 @@
+### Zyklus 1
+
+house_01 bietet 700 Wh um 18 Uhr zu 0.080 CHFD/kWh
+  house_02: nichts Passendes
+  house_04: nichts Passendes
+  house_05: nichts Passendes
+  -> niemand nimmt an
+### Zyklus 2
+
+house_01 bietet 1900 Wh um 20 Uhr zu 0.080 CHFD/kWh
+  house_02: bietet fuer waschmaschine (1200 Wh) - waschmaschine passt ins Fenster und spart 0.0240 CHFD
+  house_04: bietet fuer waschmaschine (1200 Wh) - waschmaschine passt ins Fenster und spart 0.0240 CHFD
+  house_05: nichts Passendes
+  -> Zuschlag an house_02 fuer 1200 Wh
+### Zyklus 3
+### Zyklus 4
+
+house_01 bietet 2900 Wh um 0 Uhr zu 0.080 CHFD/kWh
+  house_02: nichts Passendes
+  house_04: bietet fuer eauto (2800 Wh) - eauto passt ins Fenster und spart 0.0560 CHFD
+  house_05: nichts Passendes
+  -> Zuschlag an house_04 fuer 2800 Wh
+### Zyklus 5
+
+house_05 bietet 3000 Wh um 2 Uhr zu 0.080 CHFD/kWh
+  house_01: nichts Passendes
+  house_02: nichts Passendes
+  house_04: bietet fuer eauto (2800 Wh) - eauto muss bis 6 Uhr laufen, nur noch 4 h Zeit
+  -> Zuschlag an house_04 fuer 2800 Wh
+### Zyklus 6
+
+  house_04: laedt eauto (2800 Wh) zum vollen Preis - Frist 6 Uhr, kein guenstiges Angebot mehr abzuwarten

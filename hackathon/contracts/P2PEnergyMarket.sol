@@ -340,7 +340,7 @@ function settleSlot() external nonReentrant {
     lastSettledSlot = currentSlot;
 
     for (uint256 i = 0; i < tradeCount; i++) {
-        uint256 calculatedCost = calculateCost(trades[i].energyWh);
+        uint256 calculatedCost = calculateCostFor(trades[i].consumer, trades[i].energyWh);
 
         bool paid;
         try stablecoin.transferFrom(trades[i].consumer, trades[i].producer, calculatedCost)
@@ -434,5 +434,38 @@ function settleSlot() external nonReentrant {
     function calculateCost(uint256 energyWh) public view returns (uint256) {
         // Wh -> kWh -> Token (mit Decimals)
         return (energyWh * energyPricePerKwh) / 1000;
+    }
+    
+    /// @notice Preis für einen bestimmten Konsumenten, inklusive Incentive.
+    ///
+    /// @dev Phase 3. Ohne gesetzten IncentiveController identisch zu
+    ///      calculateCost() - Phase 1 und 2 verhalten sich also unverändert.
+    ///
+    ///      Der Multiplikator kommt in Promille: 1000 ist neutral, 800 sind
+    ///      20 Prozent Rabatt, 1200 sind 20 Prozent Aufschlag.
+    ///
+    ///      Der Aufruf ist in try/catch gekapselt. Ein fehlerhafter oder
+    ///      bösartiger Controller darf die Abrechnung nicht blockieren -
+    ///      dieselbe Überlegung wie bei der Batterie-Anbindung in Phase 2.
+    function calculateCostFor(address consumer, uint256 energyWh)
+        public view returns (uint256)
+    {
+        if (address(incentiveController) == address(0)) {
+            return calculateCost(energyWh);
+        }
+
+        try incentiveController.getPriceMultiplier(consumer)
+            returns (uint256 multiplier)
+        {
+            // Unplausible Werte verwerfen: 0 würde Energie verschenken,
+            // ein sehr hoher Wert könnte einen Haushalt ruinieren.
+            if (multiplier < 500 || multiplier > 2000) {
+                return calculateCost(energyWh);
+            }
+            uint256 preis = (energyPricePerKwh * multiplier) / 1000;
+            return (energyWh * preis) / 1000;
+        } catch {
+            return calculateCost(energyWh);
+        }
     }
 }
