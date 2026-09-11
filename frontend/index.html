@@ -1,0 +1,758 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>P2P Energy Market Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/web3@1.2.6/dist/web3.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  /* ── TOKENS (adapted from clearwave) ── */
+  :root {
+    --bg:           #E8F4F2;
+    --bg-alt:       #DFF0EE;
+    --surface:      #F4FAFA;
+    --surface-2:    #FFFFFF;
+    --accent:       #1A7A6E;
+    --accent-mid:   #2A9D8F;
+    --accent-light: #5BBFB5;
+    --accent-ghost: rgba(26,122,110,0.08);
+    --accent-border:rgba(26,122,110,0.18);
+    --text-1:       #0D1E1C;
+    --text-2:       #3A5C58;
+    --text-3:       #6B8C88;
+    --border:       rgba(13,30,28,0.09);
+    --shadow-sm:    0 2px 12px rgba(13,30,28,0.06);
+    --shadow-md:    0 8px 28px rgba(13,30,28,0.09);
+    --radius:       14px;
+    --radius-lg:    20px;
+    --ok:           #1A7A6E;
+    --warn:         #B7791F;
+    --err:          #B23A3A;
+    --mono:         'DM Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    font-family: 'DM Sans', sans-serif;
+    background: var(--bg);
+    color: var(--text-1);
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 40px 24px 80px;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1, h2, h3 { font-weight: 700; letter-spacing: -0.02em; margin: 0; }
+  button { cursor: pointer; border: none; background: none; font-family: inherit; }
+
+  /* ── HEADER ── */
+  .page-header {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 24px; margin-bottom: 32px;
+  }
+  .page-title { display: flex; align-items: center; gap: 12px; }
+  .page-title .mark {
+    width: 38px; height: 38px; border-radius: 10px;
+    background: var(--accent); flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; font-weight: 700; font-size: 15px;
+  }
+  .page-title h1 { font-size: 1.3rem; }
+  .page-title p { margin: 2px 0 0; font-size: 0.8rem; color: var(--text-3); }
+
+  .wallet-chip {
+    display: flex; align-items: center; gap: 10px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 100px; padding: 6px 8px 6px 16px;
+    box-shadow: var(--shadow-sm);
+  }
+  .wallet-chip #accountDisplay {
+    font-family: var(--mono); font-size: 0.75rem; color: var(--text-2);
+    max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .btn {
+    font-size: 0.85rem; font-weight: 600; color: #fff;
+    background: var(--accent); padding: 9px 18px; border-radius: 100px;
+    transition: background 0.2s ease, transform 0.2s ease;
+    white-space: nowrap;
+  }
+  .btn:hover { background: var(--accent-mid); }
+  .btn:active { transform: scale(0.98); }
+  .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+  .btn-outline {
+    font-size: 0.85rem; font-weight: 600; color: var(--accent);
+    background: transparent; border: 1.5px solid var(--accent-border);
+    padding: 8px 16px; border-radius: 100px;
+    transition: background 0.2s ease, border-color 0.2s ease;
+  }
+  .btn-outline:hover { background: var(--accent-ghost); border-color: var(--accent); }
+  .btn-outline:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-sm { padding: 7px 14px; font-size: 0.78rem; }
+
+  /* ── CARD ── */
+  .card {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+    padding: 24px 26px;
+    margin-bottom: 20px;
+  }
+  .card-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 12px; margin-bottom: 18px;
+  }
+  .card-head h2 { font-size: 1rem; }
+  .card-head .hint { font-size: 0.78rem; color: var(--text-3); }
+
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 720px) { .grid-2 { grid-template-columns: 1fr; } }
+
+  /* ── ROWS / LISTS ── */
+  .field-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 0; border-bottom: 1px solid var(--border);
+  }
+  .field-row:last-child { border-bottom: none; }
+  .field-label { font-size: 0.8rem; font-weight: 600; color: var(--text-2); width: 120px; flex-shrink: 0; }
+  .field-row input[type=text] {
+    flex: 1; font-family: var(--mono); font-size: 0.8rem; color: var(--text-1);
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 10px; min-width: 0;
+  }
+  .field-row input[type=text]:focus { outline: none; border-color: var(--accent); }
+  .addr {
+    font-family: var(--mono); font-size: 0.78rem; color: var(--text-2);
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 6px 10px;
+    overflow-x: auto; white-space: nowrap;
+  }
+  .missing-tag {
+    font-size: 0.7rem; font-weight: 600; color: var(--err);
+    background: rgba(178,58,58,0.08); border: 1px solid rgba(178,58,58,0.2);
+    padding: 2px 9px; border-radius: 100px; flex-shrink: 0;
+  }
+
+  .household-row {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--border);
+    font-size: 0.85rem;
+  }
+  .household-row:last-child { border-bottom: none; }
+  .household-row strong { color: var(--text-1); font-weight: 600; }
+
+  .card-actions { display: flex; justify-content: flex-end; margin-top: 16px; }
+
+  /* ── STATUS PILL (icon replacement) ── */
+  .status-icon { font-size: 0.8rem; margin-left: 4px; font-weight: 600; }
+  .status-success { color: var(--ok); }
+  .status-error   { color: var(--err); }
+  .status-loading { color: var(--warn); font-style: normal; }
+  .status-ok      { color: var(--ok); font-weight: 600; font-size: 0.8rem; }
+  .status-off     { color: var(--text-3); font-weight: 600; font-size: 0.8rem; }
+  .status-missing { color: var(--err); }
+
+  /* ── DEPLOYMENT STEPS ── */
+  .step-list { display: flex; flex-direction: column; gap: 0; }
+  .step {
+    display: flex; align-items: flex-start; gap: 14px;
+    padding: 16px 0; border-bottom: 1px solid var(--border);
+  }
+  .step:last-child { border-bottom: none; }
+  .step-index {
+    width: 26px; height: 26px; border-radius: 50%;
+    background: var(--accent-ghost); border: 1px solid var(--accent-border);
+    color: var(--accent); font-size: 0.75rem; font-weight: 700;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    margin-top: 1px;
+  }
+  .step-body { flex: 1; min-width: 0; }
+  .step-title { font-size: 0.88rem; font-weight: 600; color: var(--text-1); margin-bottom: 4px; }
+  .step-meta { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 0.76rem; color: var(--text-3); margin-bottom: 10px; }
+  .step-meta span strong { color: var(--text-2); font-family: var(--mono); font-weight: 500; }
+  .step-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+  .section-sub {
+    font-size: 0.78rem; font-weight: 700; letter-spacing: 0.01em;
+    color: var(--text-3); margin: 22px 0 4px;
+    padding-top: 14px; border-top: 1px solid var(--border);
+  }
+  .step-list > .section-sub:first-child { border-top: none; padding-top: 0; margin-top: 0; }
+
+  /* ── SCRIPT PANELS ── */
+  .script-panel { padding: 18px 0; border-bottom: 1px solid var(--border); }
+  .script-panel:last-child { border-bottom: none; }
+  .script-panel-head {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 10px;
+  }
+  .script-panel-head strong { font-size: 0.9rem; }
+  .script-state { display: flex; align-items: center; gap: 6px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-3); }
+  .status-ok .dot, .script-state.on .dot { background: var(--ok); }
+  .script-btn-row { display: flex; gap: 8px; margin-bottom: 10px; }
+  .script-log {
+    white-space: pre-wrap; font-family: var(--mono); font-size: 0.74rem;
+    color: var(--text-2); background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 12px; max-height: 11rem; overflow-y: auto;
+    line-height: 1.5;
+  }
+
+  .page-title .mark-logo {
+    width: 38px; height: 38px; flex-shrink: 0;
+    object-fit: contain; border-radius: 10px;
+  }
+
+  /* ── BATTERY PLOT ── */
+  .plot-wrap {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow: hidden;
+  }
+  .plot-wrap img { display: block; width: 100%; height: auto; }
+  .card p.note { font-size: 0.8rem; color: var(--text-3); margin: 10px 2px 0; }
+
+  #configSaveStatus { font-size: 0.8rem; font-weight: 600; }
+</style>
+</head>
+<body>
+
+  <div class="page-header">
+  <div class="page-title">
+    <img src="plots/logo.png" alt="Wave Logo of 3 Horizons" class="mark-logo">
+    <div>
+      <h1>Energy Market Dashboard</h1>
+      <p>Sepolia testnet &middot; oracle, settlement &amp; household management</p>
+    </div>
+  </div>
+  <div class="wallet-chip">
+    <span id="accountDisplay">Not connected</span>
+    <button id="connectBtn" class="btn btn-sm" onclick="connectWallet()">Connect MetaMask</button>
+  </div>
+</div>
+
+
+<div class="grid-2">
+
+  <div class="card">
+    <div class="card-head">
+      <h2>Configuration</h2>
+      <span class="hint">contract addresses</span>
+    </div>
+    <div id="contractList"></div>
+    <div class="card-actions">
+      <span id="configSaveStatus"></span>
+      <button id="saveConfigBtn" class="btn btn-sm" style="margin-left:10px;" onclick="saveConfig()">Save Configuration</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <h2>Households</h2>
+      <span class="hint">registered on market</span>
+    </div>
+    <div id="householdList"></div>
+  </div>
+
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <h2>Battery Plot</h2>
+    <span class="hint">state of charge, all households</span>
+  </div>
+  <div id="batteryPlot"></div>
+  <div class="plot-wrap">
+    <img src="plots/battery_soc.png" alt="Battery state of charge plot" class="responsive-img">
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <h2>Contract Deployment</h2>
+    <span class="hint">run once per environment</span>
+  </div>
+
+  <div class="step-list">
+
+    <div class="step">
+      <div class="step-index">1</div>
+      <div class="step-body">
+        <div class="step-title">Deploy Oracle Storage</div>
+        <div class="step-row">
+          <button class="btn btn-sm" onclick="runDeployTask('python deploy_helper.py OracleStorage', 'oracle_storage_address', 'status-deploy-oracle')">Deploy</button>
+          <span id="status-deploy-oracle" class="status-icon"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-index">2</div>
+      <div class="step-body">
+        <div class="step-title">Deploy Battery Manager</div>
+        <div class="step-meta"><span>Oracle address: <strong id="display-oracle-addr">(not loaded)</strong></span></div>
+        <div class="step-row">
+          <button class="btn btn-sm" onclick="deployBatteryManager()">Deploy</button>
+          <span id="status-deploy-battery" class="status-icon"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-index">3</div>
+      <div class="step-body">
+        <div class="step-title">Deploy P2P Energy Market</div>
+        <div class="step-meta">
+          <span>Stablecoin address: <strong id="display-stablecoin-addr">(not loaded)</strong></span>
+          <span>Oracle address: <strong id="display-oracle-addr-2">(not loaded)</strong></span>
+        </div>
+        <div class="step-row">
+          <button class="btn btn-sm" onclick="deployP2PMarket()">Deploy</button>
+          <span id="status-deploy-p2p" class="status-icon"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-index">4</div>
+      <div class="step-body">
+        <div class="step-title">Register Households in Oracle and P2P Market</div>
+        <div class="step-row">
+          <button class="btn btn-sm" onclick="oracleRegisterHouseholds()">Run</button>
+          <span id="status-oracle-register" class="status-icon"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-index">5</div>
+      <div class="step-body">
+        <div class="step-title">Approve Households</div>
+        <div class="step-row">
+          <button class="btn btn-sm" onclick="approveHouseholds()">Run</button>
+          <span id="status-approve-households" class="status-icon"></span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <h2>Continuous Scripts</h2>
+    <span class="hint">background processes</span>
+  </div>
+
+  <div class="script-panel">
+    <div class="script-panel-head">
+      <strong>Oracle Writer</strong>
+      <span id="status-oracle_writer-state" class="status-off">&#9679; stopped</span>
+    </div>
+    <div class="script-btn-row">
+      <button id="btn-oracle_writer-start" class="btn btn-sm" onclick="startScript('oracle_writer')">Start</button>
+      <button id="btn-oracle_writer-stop" class="btn-outline btn-sm" onclick="stopScript('oracle_writer')" disabled>Stop</button>
+    </div>
+    <pre id="log-oracle_writer" class="script-log">(no output yet)</pre>
+  </div>
+
+  <div class="script-panel">
+    <div class="script-panel-head">
+      <strong>Settlement Trigger</strong>
+      <span id="status-settlement_trigger-state" class="status-off">&#9679; stopped</span>
+    </div>
+    <div class="script-btn-row">
+      <button id="btn-settlement_trigger-start" class="btn btn-sm" onclick="startScript('settlement_trigger')">Start</button>
+      <button id="btn-settlement_trigger-stop" class="btn-outline btn-sm" onclick="stopScript('settlement_trigger')" disabled>Stop</button>
+    </div>
+    <pre id="log-settlement_trigger" class="script-log">(no output yet)</pre>
+  </div>
+
+</div>
+
+<style>
+  .responsive-img {
+    max-width: 100%;
+    height: auto;
+    display: block;
+  }
+</style>
+
+<script>
+
+  let web3;
+  let userAccount;
+  let config;               // from /api/config
+  let contracts = {};       // key -> { instance, address }
+
+  const MAX_UINT256 = "115792089237316195423570985008687907853269984665640564039457584007913129639935";
+  const SCRIPT_NAMES = ["oracle_writer", "settlement_trigger"];
+
+  // key -> { abiFile, addressKey, label }
+const CONTRACT_DEFS = {
+  rpc:        { abiFile: null,                   addressKey: "rpc_url",                label: "RPC Endpoint" },
+  oracle:     { abiFile: "OracleStorage.json",   addressKey: "oracle_storage_address", label: "Oracle" },
+  p2p:        { abiFile: "P2PEnergyMarket.json", addressKey: "p2p_market_address",     label: "P2P market" },
+  battery:    { abiFile: "BatteryManager.json",  addressKey: "battery_manager_address",label: "Battery manager" },
+  stablecoin: { abiFile: "EnergyStablecoin.json",addressKey: "stablecoin_address",    label: "Stablecoin" },
+};
+  
+async function startScript(name) {
+  try {
+    const res = await fetch(`/api/scripts/${name}/start`, { method: "POST" });
+    const data = await res.json();
+    if (!res.ok) {
+      alert(`Failed to start ${name}: ${data.error}`);
+      return;
+    }
+    updateScriptUI(name, true);
+  } catch (err) {
+    console.error(`startScript(${name}) failed:`, err);
+  }
+}
+
+async function stopScript(name) {
+  try {
+    const res = await fetch(`/api/scripts/${name}/stop`, { method: "POST" });
+    const data = await res.json();
+    if (!res.ok) {
+      alert(`Failed to stop ${name}: ${data.error}`);
+      return;
+    }
+    updateScriptUI(name, false);
+  } catch (err) {
+    console.error(`stopScript(${name}) failed:`, err);
+  }
+}
+
+function updateScriptUI(name, running) {
+  const stateEl = document.getElementById(`status-${name}-state`);
+  const startBtn = document.getElementById(`btn-${name}-start`);
+  const stopBtn = document.getElementById(`btn-${name}-stop`);
+  if (stateEl) {
+    stateEl.innerHTML = running ? "&#9679; running" : "&#9679; stopped";
+    stateEl.className = running ? "status-ok" : "status-off";
+  }
+  if (startBtn) startBtn.disabled = running;
+  if (stopBtn) stopBtn.disabled = !running;
+}
+
+
+async function pollScriptLogs() {
+  for (const name of SCRIPT_NAMES) {
+    try {
+      const res = await fetch(`/api/scripts/${name}/logs`);
+      if (!res.ok) continue;
+      const data = await res.json();
+
+      const logEl = document.getElementById(`log-${name}`);
+      if (logEl) {
+        const atBottom = logEl.scrollTop + logEl.clientHeight >= logEl.scrollHeight - 5;
+        const combined = [data.stdout, data.stderr]
+          .filter(Boolean)
+          .join("\n");
+        logEl.textContent = combined || "(no output yet)";
+        if (atBottom) logEl.scrollTop = logEl.scrollHeight;
+      }
+      updateScriptUI(name, data.running);
+    } catch (err) {
+      console.error(`pollScriptLogs(${name}) failed:`, err);
+    }
+  }
+}
+
+window.addEventListener("load", () => {
+  pollScriptLogs();
+  setInterval(pollScriptLogs, 2000);   // poll every 2s — well under your 60s slot duration
+});
+
+  function isValidAddress(addr) {
+    return typeof addr === "string" && /^0x[a-fA-F0-9]{40}$/.test(addr);
+  }
+
+  async function connectWallet() {
+    if (!window.ethereum) {
+      alert("MetaMask not detected. Please install MetaMask.");
+      return;
+    }
+    web3 = new Web3(window.ethereum);
+    try {
+      const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
+      userAccount = accounts[0];
+      document.getElementById("accountDisplay").textContent = userAccount;
+      await buildContracts();
+    } catch (err) {
+      console.error("Wallet connection denied:", err.message);
+    }
+  }
+
+  async function buildContracts() {
+    for (const [key, def] of Object.entries(CONTRACT_DEFS)) {
+      // Skip items without ABI files (like RPC URLs)
+      if (!def.abiFile) continue;
+
+      const address = config?.blockchain?.[def.addressKey];
+      if (!isValidAddress(address)) {
+        console.warn(`Skipping ${def.label}: no valid address yet`);
+        continue;
+      }
+      const abiRes = await fetch(`/abi/${def.abiFile}`);
+      if (!abiRes.ok) {
+        console.warn(`Skipping ${def.label}: ABI file ${def.abiFile} not found`);
+        continue;
+      }
+      const artifact = await abiRes.json();
+      const abi = artifact.abi || artifact;
+      contracts[key] = {
+        instance: new web3.eth.Contract(abi, address),
+        address,
+      };
+    }
+  }
+
+  function requireAccount() {
+    if (!userAccount) {
+      alert("Connect MetaMask first.");
+      return false;
+    }
+    return true;
+  }
+
+  function requireContract(key, label) {
+    if (!contracts[key]) {
+      alert(`${label} contract not loaded (missing address or ABI).`);
+      return false;
+    }
+    return true;
+  }
+
+  async function registerHousehold() {
+    if (!requireAccount() || !requireContract("p2p", "P2P market")) return;
+    const addr = document.getElementById("registerAddrInput").value.trim();
+    if (!isValidAddress(addr)) {
+      alert("Enter a valid 0x address first.");
+      return;
+    }
+    try {
+      await contracts.p2p.instance.methods.registerHousehold(addr).send({ from: userAccount });
+    } catch (err) {
+      console.error("registerHousehold failed:", err.message);
+    }
+  }
+
+  async function approveP2P() {
+    if (!requireAccount() || !requireContract("stablecoin", "Stablecoin") || !requireContract("p2p", "P2P market")) return;
+    try {
+      await contracts.stablecoin.instance.methods
+        .approve(contracts.p2p.address, MAX_UINT256)
+        .send({ from: userAccount });
+    } catch (err) {
+      console.error("approve failed:", err.message);
+    }
+  }
+
+  async function checkAllowanceBalance() {
+    if (!requireAccount() || !requireContract("stablecoin", "Stablecoin") || !requireContract("p2p", "P2P market")) return;
+    try {
+      const [allowance, balance] = await Promise.all([
+        contracts.stablecoin.instance.methods.allowance(userAccount, contracts.p2p.address).call(),
+        contracts.stablecoin.instance.methods.balanceOf(userAccount).call(),
+      ]);
+      document.getElementById("allowanceBalanceDisplay").textContent =
+        `allowance=${allowance}, balance=${balance}`;
+    } catch (err) {
+      console.error("allowance/balance check failed:", err.message);
+    }
+  }
+
+  async function triggerSettleSlot() {
+    if (!requireAccount() || !requireContract("p2p", "P2P market")) return;
+    try {
+      await contracts.p2p.instance.methods.settleSlot().send({ from: userAccount });
+    } catch (err) {
+      console.error("settleSlot failed:", err.message);
+    }
+  }
+
+  async function setBatteryManager() {
+    if (!requireAccount() || !requireContract("p2p", "P2P market")) return;
+    const addr = document.getElementById("batteryManagerInput").value.trim();
+    if (!isValidAddress(addr)) {
+      alert("Enter a valid 0x address first.");
+      return;
+    }
+    try {
+      await contracts.p2p.instance.methods.setBatteryManager(addr).send({ from: userAccount });
+    } catch (err) {
+      console.error("setBatteryManager failed:", err.message);
+    }
+  }
+
+  // Render inputs instead of static spans so the user can change addresses
+async function loadConfig() {
+  try {
+    const res = await fetch("/api/config");
+    if (!res.ok) return;
+    config = await res.json();
+
+    const oracleAddr = config.blockchain?.oracle_storage_address;
+    const stablecoinAddr = config.blockchain?.stablecoin_address;
+
+    const oracleEl1 = document.getElementById("display-oracle-addr");
+    const oracleEl2 = document.getElementById("display-oracle-addr-2");
+    const stablecoinEl = document.getElementById("display-stablecoin-addr");
+
+    if (oracleEl1) oracleEl1.textContent = oracleAddr || "(missing)";
+    if (oracleEl2) oracleEl2.textContent = oracleAddr || "(missing)";
+    if (stablecoinEl) stablecoinEl.textContent = stablecoinAddr || "(missing)";
+
+    const contractListEl = document.getElementById("contractList");
+    contractListEl.innerHTML = Object.entries(CONTRACT_DEFS).map(([key, def]) => {
+      const addr = config.blockchain ? config.blockchain[def.addressKey] || "" : "";
+      const valid = isValidAddress(addr);
+      return `<div class="field-row">
+        <span class="field-label">${def.label}</span>
+        <input type="text" id="input-${def.addressKey}" value="${addr}" placeholder="0x...">
+        ${valid || !addr ? "" : ''}
+        ${addr ? "" : '<span class="missing-tag">missing</span>'}
+      </div>`;
+    }).join("");
+
+    const householdListEl = document.getElementById("householdList");
+    const households = config.households || [];
+    householdListEl.innerHTML = households.length
+      ? households.map(h =>
+          `<div class="household-row"><strong>${h.name || h.id}</strong> <span class="addr">${h.address}</span></div>`
+        ).join("")
+      : `<p class="note">No households registered yet.</p>`;
+  } catch (err) {
+    console.error("Error in loadConfig:", err);
+  }
+}
+
+// Function to collect input data and POST to backend
+async function saveConfig() {
+  const updatedBlockchain = {};
+
+  // In frontend saveConfig():
+  for (const def of Object.values(CONTRACT_DEFS)) {
+    const inputEl = document.getElementById(`input-${def.addressKey}`);
+    const val = inputEl ? inputEl.value.trim() : "";
+    if (val) { // Only attach non-empty input values
+      updatedBlockchain[def.addressKey] = val;
+    }
+  }
+
+  try {
+    const res = await fetch("/api/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ blockchain: updatedBlockchain }),
+    });
+
+    const statusEl = document.getElementById("configSaveStatus");
+    if (res.ok) {
+      statusEl.textContent = "Saved!";
+      statusEl.style.color = "var(--ok)";
+      await loadConfig(); // Refresh local config instance
+      if (userAccount) await buildContracts();
+    } else {
+      statusEl.textContent = "Save failed";
+      statusEl.style.color = "var(--err)";
+    }
+  } catch (err) {
+    console.error("Error saving config:", err);
+  }
+}
+
+async function runTest() {
+  const args = document.getElementById("testArgsInput").value.trim();
+  const cmd = args ? `python test.py ${args}` : `python test.py`;
+  await runDeployTask(cmd, null, "status-test");
+}
+
+// Sets a visual status (checkmark / cross / loading) on a status span
+function setStatus(elementId, type, message = "") {
+  const el = document.getElementById(elementId);
+  if (!el) return;
+
+  if (type === "loading") {
+    el.textContent = "Running…";
+    el.className = "status-icon status-loading";
+  } else if (type === "success") {
+    el.textContent = "✓ " + (message || "Done");
+    el.className = "status-icon status-success";
+  } else if (type === "error") {
+    el.textContent = "✕ " + message;
+    el.className = "status-icon status-error";
+  } else {
+    el.textContent = "";
+  }
+}
+
+// Generic function to call Python tasks via /api/run-task
+async function runDeployTask(command, saveKey, statusElId) {
+  setStatus(statusElId, "loading");
+  try {
+    const res = await fetch("/api/run-task", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ command, saveKey }),
+    });
+
+    const data = await res.json();
+    if (res.ok && data.success) {
+      setStatus(statusElId, "success");
+      await loadConfig();
+    } else {
+      setStatus(statusElId, "error", data.error || "Error");
+    }
+  } catch (err) {
+    setStatus(statusElId, "error", err.message);
+  }
+}
+
+async function deployBatteryManager() {
+  const oracleAddr = config?.blockchain?.oracle_storage_address;
+  if (!isValidAddress(oracleAddr)) {
+    alert("Oracle Storage address is missing or invalid — deploy Oracle Storage first.");
+    return;
+  }
+  const cmd = `python deploy_helper.py BatteryManager ${oracleAddr}`;
+  await runDeployTask(cmd, null, "status-deploy-battery");
+}
+
+async function deployP2PMarket() {
+  const stablecoinAddr = config?.blockchain?.stablecoin_address;
+  const oracleAddr = config?.blockchain?.oracle_storage_address;
+  if (!isValidAddress(stablecoinAddr) || !isValidAddress(oracleAddr)) {
+    alert("Stablecoin or Oracle address is missing/invalid in the config.");
+    return;
+  }
+  const cmd = `python deploy_helper.py P2PEnergyMarket ${stablecoinAddr} ${oracleAddr}`;
+  await runDeployTask(cmd, null, "status-deploy-p2p");
+}
+
+async function oracleRegisterHouseholds() {
+  const oracleAddr = config?.blockchain?.oracle_storage_address;
+  const frontendConfigPath = config?.frontend?.config_path;
+  const cmd = `python oracle_register_households.py`;
+  await runDeployTask(cmd, null, "status-oracle-register");
+}
+
+async function approveHouseholds() {
+  const oracleAddr = config?.blockchain?.oracle_storage_address;
+  const frontendConfigPath = config?.frontend?.config_path;
+  const cmd = `python approve_households.py`;
+  await runDeployTask(cmd, null, "status-approve-households");
+}
+
+
+  // Automatically load configuration on page load
+  window.addEventListener("load", loadConfig);
+
+
+</script>
+</body>
+</html>
