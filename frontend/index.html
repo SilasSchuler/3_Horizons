@@ -1,163 +1,383 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>P2P Energy Market Dashboard</title>
 <script src="https://cdn.jsdelivr.net/npm/web3@1.2.6/dist/web3.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-  body { font-family: sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
-  section { border: 1px solid #ccc; border-radius: 8px; padding: 1rem 1.25rem; margin-bottom: 1.25rem; }
-  h2 { margin-top: 0; font-size: 1.1rem; }
-  .row { display: flex; align-items: center; gap: 0.5rem; margin: 0.5rem 0; flex-wrap: wrap; }
-  .addr { font-family: monospace; font-size: 0.85rem; }
-  button { padding: 0.4rem 0.9rem; cursor: pointer; }
-  button:disabled { opacity: 0.5; cursor: not-allowed; }
-  input[type=text] { font-family: monospace; padding: 0.3rem; width: 22rem; }
-  .status-ok { color: #0a7d2c; }
-  .status-off { color: #999; }
-  .status-missing { color: #b00; }
-  #log { white-space: pre-wrap; font-family: monospace; font-size: 0.8rem; background: #f5f5f5; padding: 0.5rem; max-height: 12rem; overflow-y: auto; }
-
-  /* CSS for responsive images */
-.responsive-img {
-  max-width: 100%;
-  height: auto;
-  display: block;
+  /* ── TOKENS (adapted from clearwave) ── */
+  :root {
+    --bg:           #E8F4F2;
+    --bg-alt:       #DFF0EE;
+    --surface:      #F4FAFA;
+    --surface-2:    #FFFFFF;
+    --accent:       #1A7A6E;
+    --accent-mid:   #2A9D8F;
+    --accent-light: #5BBFB5;
+    --accent-ghost: rgba(26,122,110,0.08);
+    --accent-border:rgba(26,122,110,0.18);
+    --text-1:       #0D1E1C;
+    --text-2:       #3A5C58;
+    --text-3:       #6B8C88;
+    --border:       rgba(13,30,28,0.09);
+    --shadow-sm:    0 2px 12px rgba(13,30,28,0.06);
+    --shadow-md:    0 8px 28px rgba(13,30,28,0.09);
+    --radius:       14px;
+    --radius-lg:    20px;
+    --ok:           #1A7A6E;
+    --warn:         #B7791F;
+    --err:          #B23A3A;
+    --mono:         'DM Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   }
 
-.status-icon { font-size: 1.1rem; margin-left: 0.5rem; font-weight: bold; }
-.status-success { color: #0a7d2c; }
-.status-error { color: #d32f2f; }
-.status-loading { color: #e65100; font-style: italic; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: 'DM Sans', sans-serif;
+    background: var(--bg);
+    color: var(--text-1);
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 40px 24px 80px;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1, h2, h3 { font-weight: 700; letter-spacing: -0.02em; margin: 0; }
+  button { cursor: pointer; border: none; background: none; font-family: inherit; }
 
-.script-log { white-space: pre-wrap; font-family: monospace; font-size: 0.8rem; background: #f5f5f5; padding: 0.5rem; max-height: 12rem; overflow-y: auto; border-radius: 4px; }
+  /* ── HEADER ── */
+  .page-header {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 24px; margin-bottom: 32px;
+  }
+  .page-title { display: flex; align-items: center; gap: 12px; }
+  .page-title .mark {
+    width: 38px; height: 38px; border-radius: 10px;
+    background: var(--accent); flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; font-weight: 700; font-size: 15px;
+  }
+  .page-title h1 { font-size: 1.3rem; }
+  .page-title p { margin: 2px 0 0; font-size: 0.8rem; color: var(--text-3); }
 
+  .wallet-chip {
+    display: flex; align-items: center; gap: 10px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 100px; padding: 6px 8px 6px 16px;
+    box-shadow: var(--shadow-sm);
+  }
+  .wallet-chip #accountDisplay {
+    font-family: var(--mono); font-size: 0.75rem; color: var(--text-2);
+    max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .btn {
+    font-size: 0.85rem; font-weight: 600; color: #fff;
+    background: var(--accent); padding: 9px 18px; border-radius: 100px;
+    transition: background 0.2s ease, transform 0.2s ease;
+    white-space: nowrap;
+  }
+  .btn:hover { background: var(--accent-mid); }
+  .btn:active { transform: scale(0.98); }
+  .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+  .btn-outline {
+    font-size: 0.85rem; font-weight: 600; color: var(--accent);
+    background: transparent; border: 1.5px solid var(--accent-border);
+    padding: 8px 16px; border-radius: 100px;
+    transition: background 0.2s ease, border-color 0.2s ease;
+  }
+  .btn-outline:hover { background: var(--accent-ghost); border-color: var(--accent); }
+  .btn-outline:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-sm { padding: 7px 14px; font-size: 0.78rem; }
+
+  /* ── CARD ── */
+  .card {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+    padding: 24px 26px;
+    margin-bottom: 20px;
+  }
+  .card-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 12px; margin-bottom: 18px;
+  }
+  .card-head h2 { font-size: 1rem; }
+  .card-head .hint { font-size: 0.78rem; color: var(--text-3); }
+
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 720px) { .grid-2 { grid-template-columns: 1fr; } }
+
+  /* ── ROWS / LISTS ── */
+  .field-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 0; border-bottom: 1px solid var(--border);
+  }
+  .field-row:last-child { border-bottom: none; }
+  .field-label { font-size: 0.8rem; font-weight: 600; color: var(--text-2); width: 120px; flex-shrink: 0; }
+  .field-row input[type=text] {
+    flex: 1; font-family: var(--mono); font-size: 0.8rem; color: var(--text-1);
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 10px; min-width: 0;
+  }
+  .field-row input[type=text]:focus { outline: none; border-color: var(--accent); }
+  .addr {
+    font-family: var(--mono); font-size: 0.78rem; color: var(--text-2);
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 6px 10px;
+    overflow-x: auto; white-space: nowrap;
+  }
+  .missing-tag {
+    font-size: 0.7rem; font-weight: 600; color: var(--err);
+    background: rgba(178,58,58,0.08); border: 1px solid rgba(178,58,58,0.2);
+    padding: 2px 9px; border-radius: 100px; flex-shrink: 0;
+  }
+
+  .household-row {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--border);
+    font-size: 0.85rem;
+  }
+  .household-row:last-child { border-bottom: none; }
+  .household-row strong { color: var(--text-1); font-weight: 600; }
+
+  .card-actions { display: flex; justify-content: flex-end; margin-top: 16px; }
+
+  /* ── STATUS PILL (icon replacement) ── */
+  .status-icon { font-size: 0.8rem; margin-left: 4px; font-weight: 600; }
+  .status-success { color: var(--ok); }
+  .status-error   { color: var(--err); }
+  .status-loading { color: var(--warn); font-style: normal; }
+  .status-ok      { color: var(--ok); font-weight: 600; font-size: 0.8rem; }
+  .status-off     { color: var(--text-3); font-weight: 600; font-size: 0.8rem; }
+  .status-missing { color: var(--err); }
+
+  /* ── DEPLOYMENT STEPS ── */
+  .step-list { display: flex; flex-direction: column; gap: 0; }
+  .step {
+    display: flex; align-items: flex-start; gap: 14px;
+    padding: 16px 0; border-bottom: 1px solid var(--border);
+  }
+  .step:last-child { border-bottom: none; }
+  .step-index {
+    width: 26px; height: 26px; border-radius: 50%;
+    background: var(--accent-ghost); border: 1px solid var(--accent-border);
+    color: var(--accent); font-size: 0.75rem; font-weight: 700;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    margin-top: 1px;
+  }
+  .step-body { flex: 1; min-width: 0; }
+  .step-title { font-size: 0.88rem; font-weight: 600; color: var(--text-1); margin-bottom: 4px; }
+  .step-meta { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 0.76rem; color: var(--text-3); margin-bottom: 10px; }
+  .step-meta span strong { color: var(--text-2); font-family: var(--mono); font-weight: 500; }
+  .step-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+  .section-sub {
+    font-size: 0.78rem; font-weight: 700; letter-spacing: 0.01em;
+    color: var(--text-3); margin: 22px 0 4px;
+    padding-top: 14px; border-top: 1px solid var(--border);
+  }
+  .step-list > .section-sub:first-child { border-top: none; padding-top: 0; margin-top: 0; }
+
+  /* ── SCRIPT PANELS ── */
+  .script-panel { padding: 18px 0; border-bottom: 1px solid var(--border); }
+  .script-panel:last-child { border-bottom: none; }
+  .script-panel-head {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 10px;
+  }
+  .script-panel-head strong { font-size: 0.9rem; }
+  .script-state { display: flex; align-items: center; gap: 6px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-3); }
+  .status-ok .dot, .script-state.on .dot { background: var(--ok); }
+  .script-btn-row { display: flex; gap: 8px; margin-bottom: 10px; }
+  .script-log {
+    white-space: pre-wrap; font-family: var(--mono); font-size: 0.74rem;
+    color: var(--text-2); background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 12px; max-height: 11rem; overflow-y: auto;
+    line-height: 1.5;
+  }
+
+  .page-title .mark-logo {
+    width: 38px; height: 38px; flex-shrink: 0;
+    object-fit: contain; border-radius: 10px;
+  }
+
+  /* ── BATTERY PLOT ── */
+  .plot-wrap {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow: hidden;
+  }
+  .plot-wrap img { display: block; width: 100%; height: auto; }
+  .card p.note { font-size: 0.8rem; color: var(--text-3); margin: 10px 2px 0; }
+
+  #configSaveStatus { font-size: 0.8rem; font-weight: 600; }
 </style>
 </head>
 <body>
 
-<h1>P2P Energy Market Dashboard</h1>
+  <div class="page-header">
+  <div class="page-title">
+    <img src="plots/logo.png" alt="Wave Logo of 3 Horizons" class="mark-logo">
+    <div>
+      <h1>Energy Market Dashboard</h1>
+      <p>Sepolia testnet &middot; oracle, settlement &amp; household management</p>
+    </div>
+  </div>
+  <div class="wallet-chip">
+    <span id="accountDisplay">Not connected</span>
+    <button id="connectBtn" class="btn btn-sm" onclick="connectWallet()">Connect MetaMask</button>
+  </div>
+</div>
 
-<input type="text" id="testArgsInput" placeholder="arg1 arg2">
-<button onclick="runTest()">Run test.py</button>
-<span id="status-test" class="status-icon"></span>
 
+<div class="grid-2">
 
-<section>
-  <h2>Contract Deployment</h2>
-
-  <div class="action-card">
-    <div class="row">
-      <button onclick="runDeployTask('python deploy_helper.py OracleStorage', 'oracle_storage_address', 'status-deploy-oracle')">
-        Deploy Oracle Storage
-      </button>
-      <span id="status-deploy-oracle" class="status-icon"></span>
+  <div class="card">
+    <div class="card-head">
+      <h2>Configuration</h2>
+      <span class="hint">contract addresses</span>
+    </div>
+    <div id="contractList"></div>
+    <div class="card-actions">
+      <span id="configSaveStatus"></span>
+      <button id="saveConfigBtn" class="btn btn-sm" style="margin-left:10px;" onclick="saveConfig()">Save Configuration</button>
     </div>
   </div>
 
-  <div class="action-card">
-    <div class="row">
-      <strong>Oracle address:</strong>
-      <span id="display-oracle-addr" class="addr">(not loaded)</span>
+  <div class="card">
+    <div class="card-head">
+      <h2>Households</h2>
+      <span class="hint">registered on market</span>
     </div>
-    <div class="row">
-      <button onclick="deployBatteryManager()">Deploy Battery Manager</button>
-      <span id="status-deploy-battery" class="status-icon"></span>
-    </div>
+    <div id="householdList"></div>
   </div>
 
-  <div class="action-card">
-    <div class="row">
-      <strong>Stablecoin address:</strong>
-      <span id="display-stablecoin-addr" class="addr">(not loaded)</span>
-    </div>
-    <div class="row">
-      <strong>Oracle address:</strong>
-      <span id="display-oracle-addr-2" class="addr">(not loaded)</span>
-    </div>
-    <div class="row">
-      <button onclick="deployP2PMarket()">Deploy P2P Energy Market</button>
-      <span id="status-deploy-p2p" class="status-icon"></span>
-    </div>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <h2>Battery Plot</h2>
+    <span class="hint">state of charge, all households</span>
+  </div>
+  <div id="batteryPlot"></div>
+  <div class="plot-wrap">
+    <img src="plots/battery_soc.png" alt="Battery state of charge plot" class="responsive-img">
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <h2>Contract Deployment</h2>
+    <span class="hint">run once per environment</span>
   </div>
 
+  <div class="step-list">
 
-  <h2>Registration</h2>
-  <div class="action-card">
-    <div class="row">
-      <button onclick="oracleRegisterHouseholds()">Register Households in Oracle</button>
-      <span id="status-oracle-register" class="status-icon"></span>
+    <div class="step">
+      <div class="step-index">1</div>
+      <div class="step-body">
+        <div class="step-title">Deploy Oracle Storage</div>
+        <div class="step-row">
+          <button class="btn btn-sm" onclick="runDeployTask('python deploy_helper.py OracleStorage', 'oracle_storage_address', 'status-deploy-oracle')">Deploy</button>
+          <span id="status-deploy-oracle" class="status-icon"></span>
+        </div>
+      </div>
     </div>
+
+    <div class="step">
+      <div class="step-index">2</div>
+      <div class="step-body">
+        <div class="step-title">Deploy Battery Manager</div>
+        <div class="step-meta"><span>Oracle address: <strong id="display-oracle-addr">(not loaded)</strong></span></div>
+        <div class="step-row">
+          <button class="btn btn-sm" onclick="deployBatteryManager()">Deploy</button>
+          <span id="status-deploy-battery" class="status-icon"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-index">3</div>
+      <div class="step-body">
+        <div class="step-title">Deploy P2P Energy Market</div>
+        <div class="step-meta">
+          <span>Stablecoin address: <strong id="display-stablecoin-addr">(not loaded)</strong></span>
+          <span>Oracle address: <strong id="display-oracle-addr-2">(not loaded)</strong></span>
+        </div>
+        <div class="step-row">
+          <button class="btn btn-sm" onclick="deployP2PMarket()">Deploy</button>
+          <span id="status-deploy-p2p" class="status-icon"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-index">4</div>
+      <div class="step-body">
+        <div class="step-title">Register Households in Oracle and P2P Market</div>
+        <div class="step-row">
+          <button class="btn btn-sm" onclick="oracleRegisterHouseholds()">Run</button>
+          <span id="status-oracle-register" class="status-icon"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-index">5</div>
+      <div class="step-body">
+        <div class="step-title">Approve Households</div>
+        <div class="step-row">
+          <button class="btn btn-sm" onclick="approveHouseholds()">Run</button>
+          <span id="status-approve-households" class="status-icon"></span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <h2>Continuous Scripts</h2>
+    <span class="hint">background processes</span>
   </div>
 
-  <h2>Approve Households</h2>
-  <div class="action-card">
-    <div class="row">
-      <button onclick="approveHouseholds()">Approve Households</button>
-      <span id="status-approve-households" class="status-icon"></span>
-    </div>
-  </div>
-</section>
-
-<section>
-  <h2>Continuous Scripts</h2>
-
-  <div class="action-card">
-    <div class="row">
+  <div class="script-panel">
+    <div class="script-panel-head">
       <strong>Oracle Writer</strong>
-      <span id="status-oracle_writer-state" class="status-off">● stopped</span>
+      <span id="status-oracle_writer-state" class="status-off">&#9679; stopped</span>
     </div>
-    <div class="row">
-      <button id="btn-oracle_writer-start" onclick="startScript('oracle_writer')">Start</button>
-      <button id="btn-oracle_writer-stop" onclick="stopScript('oracle_writer')" disabled>Stop</button>
+    <div class="script-btn-row">
+      <button id="btn-oracle_writer-start" class="btn btn-sm" onclick="startScript('oracle_writer')">Start</button>
+      <button id="btn-oracle_writer-stop" class="btn-outline btn-sm" onclick="stopScript('oracle_writer')" disabled>Stop</button>
     </div>
     <pre id="log-oracle_writer" class="script-log">(no output yet)</pre>
   </div>
 
-  <div class="action-card">
-    <div class="row">
+  <div class="script-panel">
+    <div class="script-panel-head">
       <strong>Settlement Trigger</strong>
-      <span id="status-settlement_trigger-state" class="status-off">● stopped</span>
+      <span id="status-settlement_trigger-state" class="status-off">&#9679; stopped</span>
     </div>
-    <div class="row">
-      <button id="btn-settlement_trigger-start" onclick="startScript('settlement_trigger')">Start</button>
-      <button id="btn-settlement_trigger-stop" onclick="stopScript('settlement_trigger')" disabled>Stop</button>
+    <div class="script-btn-row">
+      <button id="btn-settlement_trigger-start" class="btn btn-sm" onclick="startScript('settlement_trigger')">Start</button>
+      <button id="btn-settlement_trigger-stop" class="btn-outline btn-sm" onclick="stopScript('settlement_trigger')" disabled>Stop</button>
     </div>
     <pre id="log-settlement_trigger" class="script-log">(no output yet)</pre>
   </div>
-</section>
 
-<section>
-  <h2>Wallet</h2>
-  <div class="row">
-    <button id="connectBtn" onclick="connectWallet()">Connect MetaMask</button>
-    <span id="accountDisplay">Not connected</span>
-  </div>
-</section>
+</div>
 
-<section>
-  <h2>Configuration</h2>
-  <div id="contractList"></div>
-  <br>
-  <button id="saveConfigBtn" onclick="saveConfig()">Save Configuration</button>
-  <span id="configSaveStatus"></span>
-</section>
-
-<section>
-  <h2>Households (reference)</h2>
-  <div id="householdList"></div>
-  <p>List of registered households on the P2P energy market.</p>
-</section>
-
-<section>
-  <h2>Battery Plot</h2>
-  <div id="batteryPlot"></div>
-  <p>Visualization of battery states for the registered households on the P2P energy market.</p>
-  <img src="plots/battery_soc.png" alt="Battery Plot" class="responsive-img">
-</section>
-
-
-
+<style>
+  .responsive-img {
+    max-width: 100%;
+    height: auto;
+    display: block;
+  }
+</style>
 
 <script>
 
@@ -211,32 +431,13 @@ function updateScriptUI(name, running) {
   const startBtn = document.getElementById(`btn-${name}-start`);
   const stopBtn = document.getElementById(`btn-${name}-stop`);
   if (stateEl) {
-    stateEl.textContent = running ? "● running" : "● stopped";
+    stateEl.innerHTML = running ? "&#9679; running" : "&#9679; stopped";
     stateEl.className = running ? "status-ok" : "status-off";
   }
   if (startBtn) startBtn.disabled = running;
   if (stopBtn) stopBtn.disabled = !running;
 }
 
-// async function pollScriptLogs() {
-//   for (const name of SCRIPT_NAMES) {
-//     try {
-//       const res = await fetch(`/api/scripts/${name}/logs`);
-//       if (!res.ok) continue;
-//       const data = await res.json();
-
-//       const logEl = document.getElementById(`log-${name}`);
-//       if (logEl) {
-//         const atBottom = logEl.scrollTop + logEl.clientHeight >= logEl.scrollHeight - 5;
-//         logEl.textContent = data.stdout || "(no output yet)";
-//         if (atBottom) logEl.scrollTop = logEl.scrollHeight;
-//       }
-//       updateScriptUI(name, data.running);
-//     } catch (err) {
-//       console.error(`pollScriptLogs(${name}) failed:`, err);
-//     }
-//   }
-// }
 
 async function pollScriptLogs() {
   for (const name of SCRIPT_NAMES) {
@@ -268,44 +469,6 @@ window.addEventListener("load", () => {
 
   function isValidAddress(addr) {
     return typeof addr === "string" && /^0x[a-fA-F0-9]{40}$/.test(addr);
-  }
-
-  async function loadConfig() {
-    try {
-      const res = await fetch("/api/config");
-      if (!res.ok) {
-        console.error("Failed to load /api/config:", res.status);
-        return;
-      }
-      config = await res.json();
-      const oracleAddr = config.blockchain?.oracle_storage_address;
-      const stablecoinAddr = config.blockchain?.stablecoin_address;
-
-      const oracleEl1 = document.getElementById("display-oracle-addr");
-      const oracleEl2 = document.getElementById("display-oracle-addr-2");
-      const stablecoinEl = document.getElementById("display-stablecoin-addr");
-
-      if (oracleEl1) oracleEl1.textContent = oracleAddr || "(missing)";
-      if (oracleEl2) oracleEl2.textContent = oracleAddr || "(missing)";
-      if (stablecoinEl) stablecoinEl.textContent = stablecoinAddr || "(missing)";
-
-      const contractListEl = document.getElementById("contractList");
-      contractListEl.innerHTML = Object.entries(CONTRACT_DEFS).map(([key, def]) => {
-        const addr = config.blockchain ? config.blockchain[def.addressKey] : null;
-        const valid = isValidAddress(addr);
-        return `<div class="row"><strong>${def.label}</strong>
-          <span class="addr">${addr || "(missing)"}</span>
-          ${valid ? "" : '<span class="status-missing">not deployed / invalid</span>'}
-        </div>`;
-      }).join("");
-
-      const householdListEl = document.getElementById("householdList");
-      householdListEl.innerHTML = (config.households || []).map(h =>
-        `<div class="row"><strong>${h.name || h.id}</strong> <span class="addr">${h.address}</span></div>`
-      ).join("");
-    } catch (err) {
-      console.error("Error in loadConfig:", err);
-    }
   }
 
   async function connectWallet() {
@@ -433,19 +596,36 @@ async function loadConfig() {
     if (!res.ok) return;
     config = await res.json();
 
+    const oracleAddr = config.blockchain?.oracle_storage_address;
+    const stablecoinAddr = config.blockchain?.stablecoin_address;
+
+    const oracleEl1 = document.getElementById("display-oracle-addr");
+    const oracleEl2 = document.getElementById("display-oracle-addr-2");
+    const stablecoinEl = document.getElementById("display-stablecoin-addr");
+
+    if (oracleEl1) oracleEl1.textContent = oracleAddr || "(missing)";
+    if (oracleEl2) oracleEl2.textContent = oracleAddr || "(missing)";
+    if (stablecoinEl) stablecoinEl.textContent = stablecoinAddr || "(missing)";
+
     const contractListEl = document.getElementById("contractList");
     contractListEl.innerHTML = Object.entries(CONTRACT_DEFS).map(([key, def]) => {
       const addr = config.blockchain ? config.blockchain[def.addressKey] || "" : "";
-      return `<div class="row">
-        <strong>${def.label}:</strong>
+      const valid = isValidAddress(addr);
+      return `<div class="field-row">
+        <span class="field-label">${def.label}</span>
         <input type="text" id="input-${def.addressKey}" value="${addr}" placeholder="0x...">
+        ${valid || !addr ? "" : ''}
+        ${addr ? "" : '<span class="missing-tag">missing</span>'}
       </div>`;
     }).join("");
 
     const householdListEl = document.getElementById("householdList");
-    householdListEl.innerHTML = (config.households || []).map(h =>
-      `<div class="row"><strong>${h.name || h.id}</strong> <span class="addr">${h.address}</span></div>`
-    ).join("");
+    const households = config.households || [];
+    householdListEl.innerHTML = households.length
+      ? households.map(h =>
+          `<div class="household-row"><strong>${h.name || h.id}</strong> <span class="addr">${h.address}</span></div>`
+        ).join("")
+      : `<p class="note">No households registered yet.</p>`;
   } catch (err) {
     console.error("Error in loadConfig:", err);
   }
@@ -454,14 +634,6 @@ async function loadConfig() {
 // Function to collect input data and POST to backend
 async function saveConfig() {
   const updatedBlockchain = {};
-
-  // Read current input values
-  // for (const def of Object.values(CONTRACT_DEFS)) {
-  //   const inputEl = document.getElementById(`input-${def.addressKey}`);
-  //   if (inputEl) {
-  //     updatedBlockchain[def.addressKey] = inputEl.value.trim();
-  //   }
-  // }
 
   // In frontend saveConfig():
   for (const def of Object.values(CONTRACT_DEFS)) {
@@ -481,13 +653,13 @@ async function saveConfig() {
 
     const statusEl = document.getElementById("configSaveStatus");
     if (res.ok) {
-      statusEl.textContent = " Saved!";
-      statusEl.className = "status-ok";
+      statusEl.textContent = "Saved!";
+      statusEl.style.color = "var(--ok)";
       await loadConfig(); // Refresh local config instance
       if (userAccount) await buildContracts();
     } else {
-      statusEl.textContent = " Save failed";
-      statusEl.className = "status-missing";
+      statusEl.textContent = "Save failed";
+      statusEl.style.color = "var(--err)";
     }
   } catch (err) {
     console.error("Error saving config:", err);
@@ -506,13 +678,13 @@ function setStatus(elementId, type, message = "") {
   if (!el) return;
 
   if (type === "loading") {
-    el.textContent = "⏳ Running...";
+    el.textContent = "Running…";
     el.className = "status-icon status-loading";
   } else if (type === "success") {
-    el.textContent = "✔️ " + message;
+    el.textContent = "✓ " + (message || "Done");
     el.className = "status-icon status-success";
   } else if (type === "error") {
-    el.textContent = "❌ " + message;
+    el.textContent = "✕ " + message;
     el.className = "status-icon status-error";
   } else {
     el.textContent = "";
